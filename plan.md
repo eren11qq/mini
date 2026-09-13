@@ -108,6 +108,8 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:调 runLoop 喂假流五剧本各一例:①stream 中途吐 error 事件(stopReason=error)→ agent_end 带 reason="error"、context.messages 末位含本轮已收 partial text、`await runLoop(...)` 不 reject;②stream 吐多条 text_delta 未到 message_end → messages 末位恒 1 条 partial assistant、其 text 随 delta 累积、末位条数不增;③注入 AbortSignal 并 abort → agent_end 带 reason="aborted" 且其后无 turn_start;④一批 toolCall 中某 ToolResult.terminate=true → 该批 tool_execution_end 全完后 agent_end;⑤done 事件 stopReason=error(及 =aborted)各一例 → 该 turn 停、无后续 turn_start。五剧本任一不满足即判失败;loop 源文件零 try/catch(grep 零命中)。
+- **判卷**:通过(2026-09-14)— 五剧本红→绿全过(AC-L3-2/L3-3/L3-4/L3-5/L3-6 各一 vitest);typecheck 干净;loop 源零 try/catch(grep 零命中);12/12 loop 测试绿
 
 ### AC-L3-2: 流中途 error 进流不崩
 

@@ -51,6 +51,10 @@ export interface RunLoopOptions {
   confirm?: (prompt: string) => "yes" | "always" | "no";
   maxTurns?: number;
   clock?: () => number;
+  // AC-L3-4:外部 abort。loop 在 for-await 顶 + 工具批前查 .aborted;
+  // 命中 → partial.stopReason="aborted" → turn_end + agent_end(reason="aborted")。
+  // streamFn 自己是否观测 signal 留 S1 真 adapter(fetch 传 signal);L3 loop 缝内查兜底。
+  signal?: AbortSignal;
 }
 
 // ---- provider 事件(流进 runLoop)----
@@ -78,7 +82,8 @@ export interface Tool {
 export interface ToolResult {
   content: TextBlock[];
   isError: boolean;
-  // terminate?: boolean; — L3 整批 terminate 用,L2 不含
+  // AC-L3-5:某 ToolResult 标 terminate=true → 该批 tool_execution_end 全完后停。
+  terminate?: boolean;
 }
 
 // ---- AgentEvent 10 类(照抄 pi;agent_end.reason? 为 mini maxTurns 偏离的最小扩)----

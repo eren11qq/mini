@@ -24,6 +24,7 @@ export async function* runLoop(
 ): AsyncGenerator<AgentEvent> {
   // PRD:maxTurns=50 唯一故意偏离(保险丝)。可配,缺省 50。
   const maxTurns = options.maxTurns ?? 50;
+  const signal = options.signal;
   const newMessages: AgentMessage[] = [];
 
   yield { type: "agent_start" };
@@ -45,8 +46,17 @@ export async function* runLoop(
       stopReason: "stop",
     };
     let pushed = false;
+    let messageEnded = false;
 
     for await (const event of streamFn(context)) {
+      // AC-L3-4:外部 abort 缝内查。命中 → 该 turn 立即停。
+      if (signal?.aborted) {
+        partial.stopReason = "aborted";
+        if (pushed) context.messages[context.messages.length - 1] = partial;
+        yield { type: "message_end", message: snapshot(partial) };
+        messageEnded = true;
+        break;
+      }
       switch (event.type) {
         case "start": {
           pushed = true;
@@ -70,27 +80,71 @@ export async function* runLoop(
           partial.stopReason = event.stopReason;
           if (pushed) context.messages[context.messages.length - 1] = partial;
           yield { type: "message_end", message: snapshot(partial) };
+          messageEnded = true;
+          break;
+        }
+        case "error": {
+          // AC-L3-2:provider error 编码进流,loop 不 throw。
+          // 落 partial.stopReason/errorMessage → emit message_end → break →
+          // 停止条件①判 stopReason 非 tool_use → turn_end + agent_end(reason)。
+          partial.stopReason = event.stopReason;
+          partial.errorMessage = event.errorMessage;
+          if (!pushed) {
+            context.messages.push(partial);
+            pushed = true;
+            yield { type: "message_start", message: snapshot(partial) };
+          } else {
+            context.messages[context.messages.length - 1] = partial;
+          }
+          yield { type: "message_end", message: snapshot(partial) };
+          messageEnded = true;
           break;
         }
         default:
-          // thinking_delta / error → L3 覆盖
+          // thinking_delta → S3 覆盖
           break;
       }
-      if (event.type === "done") break;
+      if (event.type === "done" || event.type === "error") break;
+    }
+
+    // AC-L3-4:stream 因 abort 自然结束(未发 done/error)→ 缝内查兜底。
+    if (signal?.aborted && !messageEnded) {
+      partial.stopReason = "aborted";
+      if (pushed) context.messages[context.messages.length - 1] = partial;
+      yield { type: "message_end", message: snapshot(partial) };
+      messageEnded = true;
     }
 
     newMessages.push(partial);
 
     // 停止条件①:无 toolCall(stopReason 非 tool_use)→ 自然停(L1 行为)。
+    // error/aborted 在此停:agent_end 带 reason(AC-L3-2 / AC-L3-6)。
     if (partial.stopReason !== "tool_use") {
       yield { type: "turn_end", message: partial, toolResults: [] };
-      yield { type: "agent_end", messages: newMessages };
+      const reason =
+        partial.stopReason === "error" || partial.stopReason === "aborted"
+          ? partial.stopReason
+          : undefined;
+      yield {
+        type: "agent_end",
+        messages: newMessages,
+        ...(reason !== undefined && { reason }),
+      };
       return;
     }
 
     // ---- 同批 toolCall 串行执行(AC-L2-3)----
+    // AC-L3-4:abort 在 tool 批前命中 → 不执行工具,该 turn 停。
+    if (signal?.aborted) {
+      partial.stopReason = "aborted";
+      if (pushed) context.messages[context.messages.length - 1] = partial;
+      yield { type: "turn_end", message: partial, toolResults: [] };
+      yield { type: "agent_end", messages: newMessages, reason: "aborted" };
+      return;
+    }
     const toolCalls = partial.content.filter((b): b is ToolCallBlock => b.type === "toolCall");
     const toolResults: ToolResultMessage[] = [];
+    let anyTerminate = false;
     for (const call of toolCalls) {
       const tool = tools.find((t) => t.name === call.name);
       yield {
@@ -110,6 +164,7 @@ export async function* runLoop(
         result,
         isError: result.isError,
       };
+      if (result.terminate) anyTerminate = true;
       const resultMsg: ToolResultMessage = {
         role: "toolResult",
         toolCallId: call.id,
@@ -123,12 +178,21 @@ export async function* runLoop(
     }
 
     yield { type: "turn_end", message: partial, toolResults };
+
+    // AC-L3-5:整批 terminate。某 ToolResult.terminate=true → 该批后停。
+    if (anyTerminate) {
+      yield { type: "agent_end", messages: newMessages, reason: "terminate" };
+      return;
+    }
     // 继续 next turn(模型收 toolResult 后决定停或续)
   }
 }
 
 function snapshot(m: AssistantMessage): AssistantMessage {
-  return { ...m, content: [...m.content] };
+  // 深拷贝 content 块:TextBlock.text 不可变,但块本身随 delta 原地突变
+  // (appendText 改 last.text += delta)。浅拷数组会让各快照共享同一块 →
+  // 时间旅行错乱(AC-L3-3:message_end 前每快照内容 = 当时已收 delta)。
+  return { ...m, content: m.content.map((b) => ({ ...b })) };
 }
 
 function appendText(m: AssistantMessage, delta: string): void {

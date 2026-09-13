@@ -333,3 +333,259 @@ describe("AC-L2-5 maxTurns 可配", () => {
     expect(end.reason).toBe("maxTurns");
   });
 });
+
+// AC-L3-2: 流中途 error 进流不崩
+// Scenario:假 streamFn 吐 text_delta 后中途吐 error 事件(stopReason=error)
+// Expected:error 进事件流(agent_end reason=error);runLoop 返回不 throw;context.messages 末位含本轮 partial text
+// Must not:loop 源 try/catch;runLoop throw 中断调用者
+async function* errorMidStream(): AsyncIterable<ProviderEvent> {
+  yield { type: "start" };
+  yield { type: "text_delta", delta: "partial " };
+  yield { type: "text_delta", delta: "text" };
+  yield { type: "error", stopReason: "error", errorMessage: "boom" };
+}
+
+describe("AC-L3-2 流中途 error 进流不崩", () => {
+  it("error 事件 → agent_end reason=error + partial text 保留 + 不 reject", async () => {
+    const streamFn: StreamFn = () => errorMidStream();
+    const context: LoopContext = { messages: [] };
+
+    const events: AgentEvent[] = [];
+    // 不 reject:await 正常结束
+    for await (const ev of runLoop(streamFn, [], context, {})) {
+      events.push(ev);
+    }
+
+    // error 进流:agent_end 带 reason="error"
+    const end = events.find((e) => e.type === "agent_end") as {
+      reason?: string;
+    };
+    expect(end).toBeDefined();
+    expect(end.reason).toBe("error");
+
+    // message_end 事件的 assistant 快照 stopReason=error、带 errorMessage
+    const msgEnd = events.find((e) => e.type === "message_end") as {
+      message: AssistantMessage;
+    };
+    expect(msgEnd).toBeDefined();
+    expect(msgEnd.message.stopReason).toBe("error");
+    expect(msgEnd.message.errorMessage).toBe("boom");
+
+    // agent_end 后无 turn_start
+    const endIdx = events.map((e) => e.type).indexOf("agent_end");
+    expect(events.slice(endIdx + 1).filter((e) => e.type === "turn_start")).toHaveLength(0);
+
+    // context.messages 末位含本轮已收 partial text
+    const last = context.messages[context.messages.length - 1] as AssistantMessage | undefined;
+    expect(last?.role).toBe("assistant");
+    expect(last?.stopReason).toBe("error");
+    const textBlock = last?.content.find((b) => b.type === "text");
+    expect((textBlock as { text: string } | undefined)?.text).toBe("partial text");
+  });
+});
+
+// AC-L3-6: stopReason=error|aborted 停
+// Scenario:假 streamFn done 事件 stopReason=error(及 =aborted)
+// Expected:该 turn 停,不再开新 turn
+async function* doneErrorStream(): AsyncIterable<ProviderEvent> {
+  yield { type: "start" };
+  yield { type: "text_delta", delta: "x" };
+  yield { type: "done", stopReason: "error" };
+}
+async function* doneAbortedStream(): AsyncIterable<ProviderEvent> {
+  yield { type: "start" };
+  yield { type: "text_delta", delta: "y" };
+  yield { type: "done", stopReason: "aborted" };
+}
+
+describe("AC-L3-6 stopReason=error|aborted 停", () => {
+  it("done stopReason=error → 该 turn 停,无后续 turn_start,agent_end reason=error", async () => {
+    const streamFn: StreamFn = () => doneErrorStream();
+    const context: LoopContext = { messages: [] };
+    const events: AgentEvent[] = [];
+    for await (const ev of runLoop(streamFn, [], context, {})) {
+      events.push(ev);
+    }
+    const turnStarts = events.filter((e) => e.type === "turn_start");
+    expect(turnStarts).toHaveLength(1);
+    const end = events.find((e) => e.type === "agent_end") as {
+      reason?: string;
+    };
+    expect(end.reason).toBe("error");
+  });
+
+  it("done stopReason=aborted → 该 turn 停,无后续 turn_start,agent_end reason=aborted", async () => {
+    const streamFn: StreamFn = () => doneAbortedStream();
+    const context: LoopContext = { messages: [] };
+    const events: AgentEvent[] = [];
+    for await (const ev of runLoop(streamFn, [], context, {})) {
+      events.push(ev);
+    }
+    const turnStarts = events.filter((e) => e.type === "turn_start");
+    expect(turnStarts).toHaveLength(1);
+    const end = events.find((e) => e.type === "agent_end") as {
+      reason?: string;
+    };
+    expect(end.reason).toBe("aborted");
+  });
+});
+
+// AC-L3-3: partial 占位随 delta 替换
+// Scenario:假 streamFn 吐多条 text_delta,中途未到 message_end
+// Expected:messages 末位恒 1 条 partial assistant;text 随 delta 累积
+// Must not:每个 delta 新增一条 message
+async function* multiDeltaNoEnd(): AsyncIterable<ProviderEvent> {
+  yield { type: "start" };
+  yield { type: "text_delta", delta: "a" };
+  yield { type: "text_delta", delta: "b" };
+  yield { type: "text_delta", delta: "c" };
+  // 故意不到 message_end:循环靠 for-await 结束自然退出该 turn
+  yield { type: "done", stopReason: "stop" };
+}
+
+describe("AC-L3-3 partial 占位随 delta 替换", () => {
+  it("每收一条 delta messages.length 不增、末位 text 含已收 delta 拼接", async () => {
+    const streamFn: StreamFn = () => multiDeltaNoEnd();
+    const context: LoopContext = { messages: [] };
+
+    // 收集每条 message_update 时的快照,断言 text 累积
+    const updates: AssistantMessage[] = [];
+    for await (const ev of runLoop(streamFn, [], context, {})) {
+      if (ev.type === "message_update") {
+        updates.push((ev as { message: AssistantMessage }).message);
+      }
+    }
+
+    // message_update 三条(text_delta 次数),text 逐条累积
+    expect(updates).toHaveLength(3);
+    const texts = updates.map(
+      (m) => (m.content.find((b) => b.type === "text") as { text: string } | undefined)?.text,
+    );
+    expect(texts).toEqual(["a", "ab", "abc"]);
+
+    // messages 末位恒 1 条 partial assistant,含全部拼接
+    expect(context.messages).toHaveLength(1);
+    const last = context.messages[0] as AssistantMessage;
+    expect(last.role).toBe("assistant");
+    const textBlock = last.content.find((b) => b.type === "text") as { text: string } | undefined;
+    expect(textBlock?.text).toBe("abc");
+  });
+});
+
+// AC-L3-4: 外部 abort 信号
+// Scenario:runLoop 运行中,注入外部 abort 信号
+// Action:触发 abort
+// Expected:当前 turn 立即停;agent_end 带 reason="aborted";不再有新 turn_start
+// Must not:abort 后再开新 turn
+async function* abortableStream(signal: AbortSignal): AsyncIterable<ProviderEvent> {
+  yield { type: "start" };
+  yield { type: "text_delta", delta: "partial" };
+  // 持续慢吐 delta 直到 abort;abort 后流自然结束(不发 done)。
+  while (!signal.aborted) {
+    await new Promise((r) => setTimeout(r, 1));
+    yield { type: "text_delta", delta: "." };
+  }
+}
+
+describe("AC-L3-4 外部 abort 信号", () => {
+  it("abort → 当前 turn 停、agent_end reason=aborted、无后续 turn_start", async () => {
+    const controller = new AbortController();
+    const streamFn: StreamFn = () => abortableStream(controller.signal);
+    const context: LoopContext = { messages: [] };
+
+    const events: AgentEvent[] = [];
+    for await (const ev of runLoop(streamFn, [], context, {
+      signal: controller.signal,
+    })) {
+      events.push(ev);
+      // 见到首条 text_delta(message_update)后触发 abort
+      if (ev.type === "message_update") {
+        controller.abort();
+      }
+    }
+
+    const end = events.find((e) => e.type === "agent_end") as {
+      reason?: string;
+    };
+    expect(end).toBeDefined();
+    expect(end.reason).toBe("aborted");
+
+    // abort 后无新 turn_start
+    const endIdx = events.map((e) => e.type).indexOf("agent_end");
+    expect(events.slice(endIdx + 1).filter((e) => e.type === "turn_start")).toHaveLength(0);
+
+    // partial text 仍保留(含 "partial")
+    const last = context.messages[context.messages.length - 1] as AssistantMessage | undefined;
+    expect(last?.role).toBe("assistant");
+    expect(last?.stopReason).toBe("aborted");
+  });
+});
+
+// AC-L3-5: 整批 terminate
+// Scenario:某批 toolCall 中一个标 terminate
+// Action:调 runLoop
+// Expected:该批 tool_execution_end 全完后 agent_end(reason=terminate)
+// Must not:terminate 后再开新 turn
+const terminateTool: Tool = {
+  name: "stopNow",
+  async run() {
+    return {
+      content: [{ type: "text", text: "stopping" }],
+      isError: false,
+      terminate: true,
+    };
+  },
+};
+
+describe("AC-L3-5 整批 terminate", () => {
+  it("某 ToolResult.terminate=true → 该批后 agent_end,无后续 turn_start", async () => {
+    // 第 1 圈吐 toolcall(stopNow, stopReason=tool_use);若 terminate 被忽略会进第 2 圈纯文本。
+    let turn = 0;
+    const streamFn: StreamFn = () => {
+      turn += 1;
+      if (turn === 1) {
+        return (async function* () {
+          yield { type: "start" };
+          yield {
+            type: "toolcall_delta",
+            id: "t1",
+            name: "stopNow",
+            arguments: null,
+          };
+          yield { type: "done", stopReason: "tool_use" };
+        })();
+      }
+      return (async function* () {
+        yield { type: "start" };
+        yield { type: "text_delta", delta: "should not happen" };
+        yield { type: "done", stopReason: "stop" };
+      })();
+    };
+    const context: LoopContext = {
+      messages: [{ role: "user", content: "stop" }],
+      tools: [],
+    };
+
+    const events: AgentEvent[] = [];
+    for await (const ev of runLoop(streamFn, [terminateTool], context, {})) {
+      events.push(ev);
+    }
+
+    // 只 1 个 turn_start(terminate 后不开第 2 turn)
+    const turnStarts = events.filter((e) => e.type === "turn_start");
+    expect(turnStarts).toHaveLength(1);
+
+    // tool_execution_end 存在(批跑完了)
+    const toolEnd = events.find((e) => e.type === "tool_execution_end");
+    expect(toolEnd).toBeDefined();
+
+    // agent_end 带 reason="terminate",其后无 turn_start
+    const end = events.find((e) => e.type === "agent_end") as {
+      reason?: string;
+    };
+    expect(end).toBeDefined();
+    expect(end.reason).toBe("terminate");
+    const endIdx = events.map((e) => e.type).indexOf("agent_end");
+    expect(events.slice(endIdx + 1).filter((e) => e.type === "turn_start")).toHaveLength(0);
+  });
+});
