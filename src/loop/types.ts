@@ -54,11 +54,13 @@ export interface RunLoopOptions {
 }
 
 // ---- provider 事件(流进 runLoop)----
+// toolcall_delta 载 parsed args prefix(id+name+arguments);raw 累积 + salvage
+// 解析归 S1 stream adapter(PRD S6),loop 只取最新 arguments 快照。pi 同理。
 export type ProviderEvent =
   | { type: "start" }
   | { type: "text_delta"; delta: string }
   | { type: "thinking_delta"; delta: string }
-  | { type: "toolcall_delta"; delta: string }
+  | { type: "toolcall_delta"; id: string; name: string; arguments: unknown }
   | { type: "done"; stopReason: StopReason }
   | { type: "error"; stopReason: "error" | "aborted"; errorMessage?: string };
 
@@ -66,10 +68,23 @@ export type ProviderEvent =
 // 注:(config, context) 形态的 config 绑定留 S1 真 adapter;L1 假流只用 context。
 export type StreamFn = (context: LoopContext) => AsyncIterable<ProviderEvent>;
 
-// ---- AgentEvent 10 类(照抄 pi)----
+// ---- tool 注册表缝(L2)----
+// Tool.run 失败靠返回 isError:true ToolResult 回喂,不 throw(L3 error 进流同样约束)。
+// confirm gate 留 T2(beforeToolCall hook),L2 工具直接执行。
+export interface Tool {
+  name: string;
+  run(args: unknown): Promise<ToolResult>;
+}
+export interface ToolResult {
+  content: TextBlock[];
+  isError: boolean;
+  // terminate?: boolean; — L3 整批 terminate 用,L2 不含
+}
+
+// ---- AgentEvent 10 类(照抄 pi;agent_end.reason? 为 mini maxTurns 偏离的最小扩)----
 export type AgentEvent =
   | { type: "agent_start" }
-  | { type: "agent_end"; messages: AgentMessage[] }
+  | { type: "agent_end"; messages: AgentMessage[]; reason?: string }
   | { type: "turn_start" }
   | { type: "turn_end"; message: AssistantMessage; toolResults: ToolResultMessage[] }
   | { type: "message_start"; message: AssistantMessage }

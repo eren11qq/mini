@@ -58,6 +58,8 @@
 
 - Verification:人工 — 验收句判卷通过
 - Priority:Required
+- **验收句**:调 runLoop 喂假 streamFn:第 1 圈吐 toolcall_delta(done stopReason=tool_use)→ loop 按名查注册表、串行执行工具、吐 tool_execution_start/end、把 role=toolResult+toolCallId 配对回填 messages,第 2 圈纯文本停;再设 maxTurns=3 喂每圈恒 tool_use 的流 → 恰 3 个 turn_start 后 agent_end 带 reason="maxTurns"。toolCallId 不配对 / 同批并发交错 / 超 maxTurns 三者任一即判失败。
+- **判卷**:通过(2026-09-13)— seams 已与用户确认(toolcall_delta 改 {id,name,arguments};Tool[] 注册表;agent_end reason?;loop 零 try/catch)
 
 ### AC-L2-2: 单次 toolCall 两圈停
 
