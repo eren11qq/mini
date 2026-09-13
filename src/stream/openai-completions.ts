@@ -16,6 +16,26 @@ export interface StreamDeps {
   transport?: Transport;
 }
 
+// S2 retry 缝:TransportError 区分 5xx/timeout(重试)vs 4xx(透传不重试)。
+// defaultTransport 抛此型;假 transport 测试亦抛此型走同一路径。
+export class TransportError extends Error {
+  status?: number;
+  isTimeout?: boolean;
+  constructor(message: string, opts?: { status?: number; isTimeout?: boolean }) {
+    super(message);
+    this.name = "TransportError";
+    if (opts?.status !== undefined) this.status = opts.status;
+    if (opts?.isTimeout) this.isTimeout = true;
+  }
+}
+
+function isRetryable(e: unknown): boolean {
+  if (!(e instanceof TransportError)) return false;
+  if (e.isTimeout) return true;
+  if (e.status !== undefined && e.status >= 500 && e.status < 600) return true;
+  return false;
+}
+
 const FINISH_TO_STOP: Record<string, StopReason> = {
   stop: "stop",
   tool_calls: "tool_use",
@@ -24,10 +44,11 @@ const FINISH_TO_STOP: Record<string, StopReason> = {
 };
 
 // 真 transport:fetch POST 取 SSE,逐行 yield。signal 透传给 fetch(L3 abort 兜底)。
+// 非 ok 抛 TransportError(S2 retry 据 status 区分 5xx/4xx)。
 const defaultTransport: Transport = async function* (url, init, signal) {
   const res = await fetch(url, { ...init, signal });
   if (!res.ok || !res.body) {
-    throw new Error(`HTTP ${res.status}`);
+    throw new TransportError(`HTTP ${res.status}`, { status: res.status });
   }
   const dec = new TextDecoder();
   let buf = "";
@@ -146,8 +167,28 @@ export function salvage(s: string): unknown {
   return out;
 }
 
+// S2 retry:包 Transport。5xx/timeout → 重试 retries 次(默认1,PRD story 8);
+// 4xx → 透传不重试。重试耗尽 → 抛原错,createStream catch 成 error 事件。
+export function withRetry(transport: Transport, retries = 1): Transport {
+  return async function* (url, init, signal) {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        for await (const line of transport(url, init, signal)) yield line;
+        return;
+      } catch (e) {
+        lastErr = e;
+        if (attempt < retries && isRetryable(e)) continue;
+        throw e;
+      }
+    }
+    throw lastErr;
+  };
+}
+
 export function createStream(config: ProviderConfig, deps?: StreamDeps): StreamFn {
-  const transport = deps?.transport ?? defaultTransport;
+  const base = deps?.transport ?? defaultTransport;
+  const transport = withRetry(base, 1);
   return function stream(context: LoopContext): AsyncIterable<ProviderEvent> {
     return (async function* () {
       const url = `${config.base_url}/chat/completions`;

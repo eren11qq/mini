@@ -231,6 +231,9 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:调 `createStream(config)` 拿 StreamFn,经假 transport 四剧本各一例:①transport 第1次抛 `TransportError(503)`、第2次回放正常 SSE → 收 ProviderEvent 序列含 text_delta+done(无 error)、transport 被调恰好 2 次;②transport 恒抛 `TransportError(503)` → 流出 error 事件含 "503" 字样、`for await` 不 reject;③transport 抛 `TransportError(401)` → 不重试、transport 被调恰好 1 次、流出 error 含 "401";④transport 抛 `TransportError(isTimeout=true)` → 走重试路径(同①/②语义)。四剧本任一不满足即判失败;源零真实密钥(grep `sk-` 零命中)。
+- **seams(已确认 2026-09-14)**:`withRetry(transport, retries)` 包 Transport 缝;`TransportError{status?,isTimeout?}` 区分 5xx/timeout(重试)vs 4xx(透传);`createStream` 默认包一层;`defaultTransport` 改抛 `TransportError`。
+- **判卷**:通过(2026-09-14)— seams 与用户确认;AC-S2-2..S2-5 红→绿验证
 
 ### AC-S2-2: 5xx 重试 1 次成功
 
