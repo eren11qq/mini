@@ -166,6 +166,9 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:调 `createStream(deepseekConfig)` 拿到 StreamFn,喂进 `runLoop` 一段只含 `text_delta`+`done(stopReason="stop", usage={prompt_tokens,completion_tokens})` 的脱敏 SSE fixture(经假 transport 回放),收到的 ProviderEvent 序列恰为 `start→text_delta*→done`、`done.usage` 两数与 fixture 对齐;再喂一段含 `toolcall_delta`(参数分多 delta)的 fixture → 中途每条 `toolcall_delta.arguments` 非空、定稿合法时产 `done(stopReason="tool_use")`;再喂一段定稿 JSON 截断 fixture → 流出 `error` 事件且该 toolCall 无合法 `done`。三剧本任一不满足即判失败;源码零真实密钥(grep `sk-` 零命中)。
+- **seams(已确认 2026-09-14)**:`createStream(config): StreamFn`(loop 缝不变,config 绑 adapter);Transport 注入缝 `deps.transport`;`ProviderEvent.done.usage?` 扩字段;`ProviderConfig={dialect,base_url,key_env,models:[{id,contextWindow}]}`;salvage 尽力解析前缀 / 定稿截断整批拒执。
+- **判卷**:通过(2026-09-14)— seams 与用户确认;AC-S1-2..S1-7 红→绿验证
 
 ### AC-S1-2: 协议映射
 

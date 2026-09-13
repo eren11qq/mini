@@ -60,13 +60,38 @@ export interface RunLoopOptions {
 // ---- provider 事件(流进 runLoop)----
 // toolcall_delta 载 parsed args prefix(id+name+arguments);raw 累积 + salvage
 // 解析归 S1 stream adapter(PRD S6),loop 只取最新 arguments 快照。pi 同理。
+// AC-S1-3:done.usage? 为 M3 压缩阈值与成本核对来源;adapter 填,loop 透传。
+export interface Usage {
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
 export type ProviderEvent =
   | { type: "start" }
   | { type: "text_delta"; delta: string }
   | { type: "thinking_delta"; delta: string }
   | { type: "toolcall_delta"; id: string; name: string; arguments: unknown }
-  | { type: "done"; stopReason: StopReason }
+  | { type: "done"; stopReason: StopReason; usage?: Usage }
   | { type: "error"; stopReason: "error" | "aborted"; errorMessage?: string };
+
+// ---- S1 stream adapter 缝 ----
+// createStream(config) 把 config 绑进 StreamFn(loop 缝不变;types.ts:72 注)。
+// Transport 是离线测试零网络关键:喂假 transport 回放 SSE 行;S2 mock fetch 走同缝。
+export interface ModelDef {
+  id: string;
+  contextWindow: number;
+}
+export interface ProviderConfig {
+  dialect: "openai-completions" | "anthropic-messages";
+  base_url: string;
+  key_env: string;
+  models: ModelDef[];
+}
+export type Transport = (
+  url: string,
+  init: RequestInit,
+  signal?: AbortSignal,
+) => AsyncIterable<string>;
 
 // ---- streamFn 缝 ----
 // 注:(config, context) 形态的 config 绑定留 S1 真 adapter;L1 假流只用 context。
