@@ -207,17 +207,30 @@ function openaiStream(
     const url = `${config.base_url}/chat/completions`;
     const key = process.env[config.key_env] ?? "";
     const model = config.models[0]?.id ?? "";
+    // AC-S4-2 前置:context.tools → openai function-tool 数组(透传 name/description/parameters)。
+    // 缺省不发 tools 字段(空数组部分 API 拒收)。
+    const body: Record<string, unknown> = {
+      model,
+      messages: context.messages,
+      stream: true,
+    };
+    if (Array.isArray(context.tools) && context.tools.length > 0) {
+      body.tools = context.tools.map((t: any) => ({
+        type: "function",
+        function: {
+          name: t?.name,
+          ...(t?.description ? { description: t.description } : {}),
+          ...(t?.parameters ? { parameters: t.parameters } : {}),
+        },
+      }));
+    }
     const init: RequestInit = {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${key}`,
       },
-      body: JSON.stringify({
-        model,
-        messages: context.messages,
-        stream: true,
-      }),
+      body: JSON.stringify(body),
     };
     const tc = new Map<number, { id: string; name: string; argString: string }>();
     yield { type: "start" };

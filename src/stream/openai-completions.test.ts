@@ -238,6 +238,65 @@ describe("AC-S1-6 salvage 尽力解析", () => {
   });
 });
 
+// AC-S4-2 前置:tools 序列化进请求体
+// Scenario:context.tools 含工具(name/description/parameters schema)
+// Action:stream 经假 transport 回放,捕获 init.body
+// Expected:body.tools 为 openai function-tool 数组,透传 name/description/parameters
+//         context.tools 缺省 → body 不含 tools 字段(不发空数组)
+describe("AC-S4-2 前置 tools 序列化进请求体", () => {
+  it("context.tools → body.tools[] openai function 格式,透传 schema", async () => {
+    let captured: RequestInit | null = null;
+    const transport: Transport = async function* (_url, init) {
+      captured = init;
+      yield `data: [DONE]`;
+    };
+    const streamFn = createStream(deepseekConfig, { transport });
+    const tools = [
+      {
+        name: "echo",
+        description: "echo a path",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+      },
+    ];
+    for await (const _ of streamFn({
+      messages: [{ role: "user", content: "call echo" }],
+      tools,
+    })) {
+      void _;
+    }
+    const body = JSON.parse(captured!.body as string);
+    expect(Array.isArray(body.tools)).toBe(true);
+    expect(body.tools[0]).toEqual({
+      type: "function",
+      function: {
+        name: "echo",
+        description: "echo a path",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+      },
+    });
+  });
+
+  it("context.tools 缺省 → body 不含 tools 字段", async () => {
+    let captured: RequestInit | null = null;
+    const transport: Transport = async function* (_url, init) {
+      captured = init;
+      yield `data: [DONE]`;
+    };
+    const streamFn = createStream(deepseekConfig, { transport });
+    for await (const _ of streamFn({ messages: [] })) void _;
+    const body = JSON.parse(captured!.body as string);
+    expect(body.tools).toBeUndefined();
+  });
+});
+
 // AC-S1-7:salvage 定稿截断整批拒执
 // Scenario:fixture toolcall 定稿时参数 JSON 截断不可解析
 // Action:stream
