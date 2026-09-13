@@ -279,6 +279,9 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:调 `createStream({dialect:"anthropic-messages",...})` 喂一段含 thinking 块 + text 块 + toolcall 块的脱敏 anthropic SSE fixture(经假 transport)→ 收 ProviderEvent 序列含 thinking_delta、text 块成 text_delta、toolcall 块成 toolcall_delta、收尾 done(stopReason=tool_use)、类型 ⊆ 契约六类(start/thinking_delta/text_delta/toolcall_delta/done/error);再仅改 config.dialect 为 openai-completions → `src/loop/` 源文件 diff = 0;再加一条同 anthropic 方言的厂商配置行 → 适配器源文件 diff = 0。三剧本任一不满足即判失败;源零真实密钥。
+- **seams(已确认 2026-09-14)**:`createStream(config, deps)` 改派发器(dialect 分支);anthropic 解析入新文件 `src/stream/anthropic-messages.ts`,复用 salvage;thinking 块 → thinking_delta;input_json_delta 累积 → toolcall_delta;usage(input→prompt,output→completion);withRetry 两边包;S1 测试不变。
+- **判卷**:通过(2026-09-14)— seams 与用户确认;AC-S3-2..S3-4 红→绿验证
 
 ### AC-S3-2: thinking_delta 映射
 

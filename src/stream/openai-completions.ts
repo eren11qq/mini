@@ -11,6 +11,7 @@ import type {
   Transport,
   Usage,
 } from "../loop/types.js";
+import { anthropicStream } from "./anthropic-messages.js";
 
 export interface StreamDeps {
   transport?: Transport;
@@ -186,104 +187,115 @@ export function withRetry(transport: Transport, retries = 1): Transport {
   };
 }
 
+// S3 派发器:dialect=anthropic-messages → anthropicStream;else openai(已有)。
+// withRetry 统一包一层(两边共 Transport 缝)。S1 缝签名不变 → 上层零改动(AC-S3-3)。
 export function createStream(config: ProviderConfig, deps?: StreamDeps): StreamFn {
-  const base = deps?.transport ?? defaultTransport;
-  const transport = withRetry(base, 1);
+  const transport = withRetry(deps?.transport ?? defaultTransport, 1);
   return function stream(context: LoopContext): AsyncIterable<ProviderEvent> {
-    return (async function* () {
-      const url = `${config.base_url}/chat/completions`;
-      const key = process.env[config.key_env] ?? "";
-      const model = config.models[0]?.id ?? "";
-      const init: RequestInit = {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${key}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: context.messages,
-          stream: true,
-        }),
-      };
-      const tc = new Map<number, { id: string; name: string; argString: string }>();
-      yield { type: "start" };
-      try {
-        for await (const line of transport(url, init)) {
-          const data = line.startsWith("data: ") ? line.slice(6) : line.trim();
-          if (!data || data === "[DONE]") continue;
-          let json: any;
-          try {
-            json = JSON.parse(data);
-          } catch {
-            continue; // 非 JSON 行跳过(openai 注释行等)
-          }
-          const choice = json.choices?.[0];
-          const delta = choice?.delta ?? {};
-          if (typeof delta.content === "string" && delta.content) {
-            yield { type: "text_delta", delta: delta.content };
-          }
-          if (Array.isArray(delta.tool_calls)) {
-            for (const c of delta.tool_calls) {
-              const idx: number = c.index ?? 0;
-              const cur = tc.get(idx) ?? { id: "", name: "", argString: "" };
-              if (c.id) cur.id = c.id;
-              if (c.function?.name) cur.name = c.function.name;
-              if (typeof c.function?.arguments === "string") {
-                cur.argString += c.function.arguments;
-              }
-              tc.set(idx, cur);
-              const parsed = salvage(cur.argString);
-              if (
-                parsed &&
-                (typeof parsed !== "object" || Object.keys(parsed as object).length > 0)
-              ) {
-                yield {
-                  type: "toolcall_delta",
-                  id: cur.id,
-                  name: cur.name,
-                  arguments: parsed,
-                };
-              }
+    return config.dialect === "anthropic-messages"
+      ? anthropicStream(config, transport, context)
+      : openaiStream(config, transport, context);
+  };
+}
+
+function openaiStream(
+  config: ProviderConfig,
+  transport: Transport,
+  context: LoopContext,
+): AsyncIterable<ProviderEvent> {
+  return (async function* () {
+    const url = `${config.base_url}/chat/completions`;
+    const key = process.env[config.key_env] ?? "";
+    const model = config.models[0]?.id ?? "";
+    const init: RequestInit = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: context.messages,
+        stream: true,
+      }),
+    };
+    const tc = new Map<number, { id: string; name: string; argString: string }>();
+    yield { type: "start" };
+    try {
+      for await (const line of transport(url, init)) {
+        const data = line.startsWith("data: ") ? line.slice(6) : line.trim();
+        if (!data || data === "[DONE]") continue;
+        let json: any;
+        try {
+          json = JSON.parse(data);
+        } catch {
+          continue; // 非 JSON 行跳过(openai 注释行等)
+        }
+        const choice = json.choices?.[0];
+        const delta = choice?.delta ?? {};
+        if (typeof delta.content === "string" && delta.content) {
+          yield { type: "text_delta", delta: delta.content };
+        }
+        if (Array.isArray(delta.tool_calls)) {
+          for (const c of delta.tool_calls) {
+            const idx: number = c.index ?? 0;
+            const cur = tc.get(idx) ?? { id: "", name: "", argString: "" };
+            if (c.id) cur.id = c.id;
+            if (c.function?.name) cur.name = c.function.name;
+            if (typeof c.function?.arguments === "string") {
+              cur.argString += c.function.arguments;
             }
-          }
-          const finish = choice?.finish_reason;
-          if (finish) {
-            const usage: Usage | undefined = json.usage
-              ? {
-                  prompt_tokens: json.usage.prompt_tokens ?? 0,
-                  completion_tokens: json.usage.completion_tokens ?? 0,
-                }
-              : undefined;
-            // AC-S1-7:定稿时校验所有 toolCall arguments 可解析;
-            // 任一截断不可解析 → 整批拒执,流 error,不产 done。
-            const bad = [...tc.values()].find((c) => {
-              try {
-                JSON.parse(c.argString);
-                return false;
-              } catch {
-                return true;
-              }
-            });
-            if (bad) {
+            tc.set(idx, cur);
+            const parsed = salvage(cur.argString);
+            if (
+              parsed &&
+              (typeof parsed !== "object" || Object.keys(parsed as object).length > 0)
+            ) {
               yield {
-                type: "error",
-                stopReason: "error",
-                errorMessage: `toolcall ${bad.id || "?"} arguments truncated`,
+                type: "toolcall_delta",
+                id: cur.id,
+                name: cur.name,
+                arguments: parsed,
               };
-            } else {
-              const stopReason = FINISH_TO_STOP[finish] ?? "error";
-              yield { type: "done", stopReason, usage };
             }
           }
         }
-      } catch (e) {
-        yield {
-          type: "error",
-          stopReason: "error",
-          errorMessage: e instanceof Error ? e.message : String(e),
-        };
+        const finish = choice?.finish_reason;
+        if (finish) {
+          const usage: Usage | undefined = json.usage
+            ? {
+                prompt_tokens: json.usage.prompt_tokens ?? 0,
+                completion_tokens: json.usage.completion_tokens ?? 0,
+              }
+            : undefined;
+          // AC-S1-7:定稿时校验所有 toolCall arguments 可解析;
+          // 任一截断不可解析 → 整批拒执,流 error,不产 done。
+          const bad = [...tc.values()].find((c) => {
+            try {
+              JSON.parse(c.argString);
+              return false;
+            } catch {
+              return true;
+            }
+          });
+          if (bad) {
+            yield {
+              type: "error",
+              stopReason: "error",
+              errorMessage: `toolcall ${bad.id || "?"} arguments truncated`,
+            };
+          } else {
+            const stopReason = FINISH_TO_STOP[finish] ?? "error";
+            yield { type: "done", stopReason, usage };
+          }
+        }
       }
-    })();
-  };
+    } catch (e) {
+      yield {
+        type: "error",
+        stopReason: "error",
+        errorMessage: e instanceof Error ? e.message : String(e),
+      };
+    }
+  })();
 }
