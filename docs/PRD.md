@@ -119,7 +119,7 @@ loop 的全部依赖可替换 —— `streamFn` / `confirm` / `summarizeFn` / �
 ## Implementation Decisions
 
 - **运行时**:node v24 直跑 .ts(原生 type stripping,环境已验证);单 npm 包,src/{stream,loop,tools,memory,harness}/ 按目录分层;无构建步骤
-- **事件契约照抄 pi**:provider 层事件 start/text_delta/thinking_delta/toolcall_delta/done/error;agent 层 12 个 AgentEvent(agent_start/turn_start/message_start/update/end/tool_execution_start/update/end/turn_end/agent_end 一族)。error 一律编码进流
+- **事件契约照抄 pi**:provider 层事件 start/text_delta/thinking_delta/toolcall_delta/done/error;agent 层 10 个 AgentEvent(agent_start/turn_start/message_start/message_update/message_end/tool_execution_start/tool_execution_update/tool_execution_end/turn_end/agent_end,实测 `packages/agent/src/types.ts:428-443`)。error 一律编码进流
 - **适配器 2 个,按方言分**:openai-completions(首发 deepseek-chat,凭据实测可用)、anthropic-messages(第二,qwen3.8-flash 经 token-plan relay,实测可用、会吐 thinking 块)。配置结构:{dialect, base_url, key_env, models[]}
 - **注入原则**:loop 的全部依赖可替换 —— streamFn / confirm(prompt)→answer / summarizeFn / 时钟/随机源,测试零网络
 - **停止判定**:pi 五条件 + maxTurns=50(配置项,唯一故意偏离)

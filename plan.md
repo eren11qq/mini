@@ -17,7 +17,7 @@
 - **Type**:AFK
 - **Blocked by**:None — 立即开工
 - **User stories**:11、13(部分)
-- **What to build**:`runLoop(streamFn, tools, context, {confirm, maxTurns, clock})` 骨架。streamFn 注入假物只吐纯文本(无 toolCall)。双层 while(steering/followUp 队列不挂)。事件协议照抄 pi 12 个 AgentEvent。
+- **What to build**:`runLoop(streamFn, tools, context, {confirm, maxTurns, clock})` 骨架。streamFn 注入假物只吐纯文本(无 toolCall)。双层 while(steering/followUp 队列不挂)。事件协议照抄 pi 10 个 AgentEvent(实测 `packages/agent/src/types.ts:428-443`)。
 
 ### AC-L1-1: W1 验收句
 
@@ -26,12 +26,14 @@
 - Expected:助教判卷通过(有不合格依据)
 - Verification:人工 — 验收句文本入 plan.md 并标注判卷通过
 - Priority:Required
+- **验收句**:调 `runLoop` 喂一个只吐 `text_delta`、done 的 `stopReason` 非 `tool_use` 的假 streamFn,收到的 AgentEvent 序列恰为 `agent_start→turn_start→message_start→(message_update*)→message_end→turn_end→agent_end` 七段、`agent_end` 后再无 `turn_start`,且 `context.messages` 末位恰一条 assistant message 含本轮全部拼回的文本 —— 这就算 L1 完。
+- **判卷**:通过(2026-09-13)— 已由 AC-L1-2 / AC-L1-3 红→绿验证(typecheck 干净、3/3 测试过、loop 源零 try/catch)
 
 ### AC-L1-2: 纯文本一轮停
 
 - Scenario:假 streamFn 只吐 text_delta 序列(无 toolCall)
 - Action:调 runLoop
-- Expected:流出事件序列含 agent_start→turn_start→message_start→update→message_end→turn_end→agent_end(12 类照抄 pi);context.messages 末位一条 assistant message 含本轮全部 text;循环停止
+- Expected:流出事件序列含 agent_start→turn_start→message_start→update→message_end→turn_end→agent_end(10 类照抄 pi);context.messages 末位一条 assistant message 含本轮全部 text;循环停止
 - Must not:loop 层出现 try/catch(grep `try\s*{` 或 `catch\s*\(` 在 loop 源文件零命中)
 - Verification:vitest — 喂假 text_delta 序列断言事件序列与 messages 终态
 - Priority:Required

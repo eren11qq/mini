@@ -19,7 +19,7 @@
 | --- | ------------------------------------------------------------------------------------------- |
 | L1  | 双层 while 形状照抄;steering/followUp 队列不挂(v2)                                          |
 | L2  | 停止 = pi 五条件(无 toolCall / error / abort / 钩子 / 整批 terminate)★ + maxTurns=50 保险丝 |
-| L3  | ◇ 事件协议照抄 pi 12 个 AgentEvent                                                          |
+| L3  | ◇ 事件协议照抄 pi 10 个 AgentEvent(实测 types.ts:428-443)                                   |
 | L4  | ◇ 同批 toolCall 串行执行                                                                    |
 | L5  | ◇ 流式 partial 占位 messages 末位;error 编码进流、loop 零 try/catch                         |
 | L6  | 测试 = 假流四剧本:①纯文本 1 圈停 ②toolCall→2 圈停 ③无限 toolCall→保险丝 ④流中途 error→不崩  |
