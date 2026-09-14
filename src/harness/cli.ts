@@ -216,8 +216,14 @@ async function main(): Promise<void> {
     session.append({ type: "message", payload: user });
 
     // AC-H3-5:每轮从当前工具集重算 system prompt(纯函数零缓存 = 工具集变即重建)。
+    // env 每轮现取(日期跨天热更新);仍走 opts,纯函数零状态不破。
     context.systemPrompt = buildSystemPrompt({
       tools: providerTools,
+      env: {
+        platform: process.platform,
+        date: new Date().toISOString().slice(0, 10),
+        cwd,
+      },
       ...(projectContext ? { projectContext } : {}),
     });
 

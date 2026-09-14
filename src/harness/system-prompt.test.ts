@@ -49,4 +49,17 @@ describe("S-a buildSystemPrompt", () => {
     expect(p).toContain("- mystery");
     expect(p).not.toContain("- mystery:");
   });
+
+  it("env:传入 → <env> 三行落在工具清单前;不传 → 整块省略(不留空壳)", () => {
+    const p = buildSystemPrompt({
+      tools: TOOLS,
+      env: { platform: "linux", date: "2026-09-14", cwd: "/home/dqq/project/mini" },
+    });
+    expect(p.indexOf("<env>")).toBeGreaterThan(0);
+    expect(p).toContain("1. 平台：linux");
+    expect(p).toContain("3. 工作目录：/home/dqq/project/mini");
+    expect(p.indexOf("</env>")).toBeLessThan(p.indexOf("- read:"));
+    const bare = buildSystemPrompt({ tools: TOOLS });
+    expect(bare).not.toContain("<env>");
+  });
 });
