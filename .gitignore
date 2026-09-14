@@ -22,3 +22,6 @@ coverage/
 
 # Claude Code 个人权限 / 本地覆盖 — 不进库
 .claude/settings.local.json
+
+# CodeGraph 本地索引 — 机器生成,不进库
+.codegraph/

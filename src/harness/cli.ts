@@ -43,6 +43,13 @@ const providerTools = TOOLS.map((t) => ({
   ...(t.schema ? { parameters: t.schema } : {}),
 }));
 
+// 本地日期 YYYY-MM-DD(toISOString 是 UTC,东八区晚 8 点后跨天错一天)。
+function localDate(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 // 密钥只从 env 读(PRD 约束)。缺 → 友好报错返回 false(启动缺 = 退出;热切缺 = 不切)。
 function ensureKey(provider: ProviderConfig): boolean {
   if (process.env[provider.key_env]) return true;
@@ -221,7 +228,7 @@ async function main(): Promise<void> {
       tools: providerTools,
       env: {
         platform: process.platform,
-        date: new Date().toISOString().slice(0, 10),
+        date: localDate(), // 本地日期:toISOString 是 UTC,东八区晚 8 点后跨天错一天
         cwd,
       },
       ...(projectContext ? { projectContext } : {}),
