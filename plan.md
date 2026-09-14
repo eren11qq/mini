@@ -550,6 +550,9 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:调 `new SessionManager({baseDir:临时目录, cwd})` 后 append 一条 message entry → `baseDir/<cwd编码>/<时间>_<uuidv7>.jsonl` 存在,首行 header {type:"session",version:1,id,cwd}、第 2 行 entry 含 id/parentId/ts/type/payload;append 返回后立读文件已含新行(不关句柄、不重开);再 append model_change(payload 含切后模型)→ 该行落盘且 `rebuild().model` = 切后模型;append type="custom" → 抛错且文件行数不变。四剧本任一不满足即判失败。
+- **判卷**:通过(2026-09-14)— seams 与用户确认:M1 含最小线性 rebuild(顺序投影;多分支 leaf 回溯留 M2)
+- **验证**:AC-M1-2/3/4/5 红→绿(AC-M1-3/4 即时绿 = 回归护栏,红只在 AC-M1-2 parentId 顺序 bug 与 AC-M1-5 rebuild 缺失两处真红);typecheck 0;eslint src/memory 0 问题;prettier 干净;全量 68 passed + 1 skipped(smoke)
 
 ### AC-M1-2: 落盘格式
 
