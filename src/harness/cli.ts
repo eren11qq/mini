@@ -1,4 +1,4 @@
-// H1+H2 harness:组装 + 裸 readline + 流式 stdout。AC-H1-3 = 本文件零业务逻辑:
+// H1+H2+H3 harness:组装 + 裸 readline + 流式 stdout。AC-H1-3 = 本文件零业务逻辑:
 // 停止判定、schema 校验、确认门规则、压缩全在 loop/stream/tools/memory 层;H2 的厂商
 // 选择/热切/会话挑选的裁决也全在纯缝里(parseArgs / resolveProvider / resolveModel /
 // SessionManager.list —— 均可测)。这里只做「读 flag → 选会话 → 拼参数 → 转事件 → 落盘」
@@ -8,7 +8,15 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { runLoop } from "../loop/run-loop.ts";
-import type { LoopContext, ProviderConfig, Tool, UserMessage } from "../loop/types.ts";
+import type {
+  AgentMessage,
+  LoopContext,
+  ProviderConfig,
+  Tool,
+  UserMessage,
+} from "../loop/types.ts";
+import { buildSummarizePrompt } from "../memory/summarize-prompt.ts";
+import { serializeConversation } from "../memory/serialize.ts";
 import { SessionManager } from "../memory/session-manager.ts";
 import { createStream } from "../stream/openai-completions.ts";
 import { bashTool } from "../tools/bash.ts";
@@ -16,8 +24,10 @@ import { editTool } from "../tools/edit.ts";
 import { readTool } from "../tools/read.ts";
 import { writeTool } from "../tools/write.ts";
 import { parseArgs } from "./args.ts";
+import { findProjectContext } from "./project-context.ts";
 import { resolveProvider } from "./providers.ts";
 import { resolveModel } from "./resolve-model.ts";
+import { buildSystemPrompt } from "./system-prompt.ts";
 import { createRenderer } from "./renderer.ts";
 
 // 出厂厂商(无 --model、无历史 model_change 时)。--model <alias> 与 model_change payload
@@ -122,14 +132,51 @@ async function main(): Promise<void> {
   }
   let streamFn = createStream(provider);
 
+  // H3 S-c 生产 summarizeFn:buildSummarizePrompt(七段规格) + serializeConversation(对话正文)
+  // 喂当前 streamFn = 同厂商同模型(/model 热切后变量已换,闭包取最新)。裁决零在 harness。
+  const summarizeFn = async (old: AgentMessage[], previousSummary?: string): Promise<string> => {
+    const prompt = `${buildSummarizePrompt(previousSummary)}\n${serializeConversation(old)}`;
+    let text = "";
+    for await (const ev of streamFn({ messages: [{ role: "user", content: prompt }], tools: [] })) {
+      if (ev.type === "text_delta") text += ev.delta;
+      else if (ev.type === "error") throw new Error(ev.errorMessage ?? "summarize 流错误");
+    }
+    return text;
+  };
+
+  const projectContext = findProjectContext({ cwd }); // 启动读一次;缺失 = prompt 该段省略
+
   const context: LoopContext = {
     messages: rebuilt.messages, // M2 rebuild 缝:接回所选会话历史
     tools: providerTools,
   };
 
+  // H3:/compact 手动 = force 跳阈值;自动 = 缺省阈值门(compact 内判,不过 → null 零副作用)。
+  // 压缩产物经 rebuild 热替换 context.messages(AC-H3-2"后续消息用压缩后 messages")。
+  const runCompact = async (manual: boolean): Promise<void> => {
+    try {
+      const entry = await session.compact({
+        contextWindow: provider.models[0]!.contextWindow,
+        summarizeFn,
+        force: manual,
+      });
+      if (!entry) {
+        if (manual) process.stdout.write("当前会话无可压缩内容(新会话先聊一轮)。\n");
+        return;
+      }
+      context.messages = session.rebuild().messages;
+      process.stdout.write(
+        `已${manual ? "手动" : "自动"}压缩 → 上下文 ${context.messages.length} 条(纪要已落盘)。\n`,
+      );
+    } catch (e) {
+      process.stdout.write(`[error] compact: ${(e as Error).message}\n`);
+    }
+  };
+
   process.stdout.write(
     `mini · ${alias} (${provider.models[0]!.id}) · ${cwd}\n` +
-      `  历史 ${context.messages.length} 条 · /model <alias> 热切 · Ctrl+C 中断当前轮 / 空转时退出\n`,
+      `  历史 ${context.messages.length} 条 · /model <alias> 热切 · /compact 手动压缩 · Ctrl+C 中断当前轮 / 空转时退出\n` +
+      (projectContext ? `  项目上下文:${projectContext.path}\n` : ""),
   );
 
   for (;;) {
@@ -158,9 +205,21 @@ async function main(): Promise<void> {
       continue;
     }
 
+    // H3 AC-H3-2:/compact = 手动压缩(force 跳阈值;切点/配对/拒压照旧在 memory)。
+    if (line === "/compact") {
+      await runCompact(true);
+      continue;
+    }
+
     const user: UserMessage = { role: "user", content: line };
     context.messages.push(user);
     session.append({ type: "message", payload: user });
+
+    // AC-H3-5:每轮从当前工具集重算 system prompt(纯函数零缓存 = 工具集变即重建)。
+    context.systemPrompt = buildSystemPrompt({
+      tools: providerTools,
+      ...(projectContext ? { projectContext } : {}),
+    });
 
     controller = new AbortController();
     try {
@@ -182,6 +241,8 @@ async function main(): Promise<void> {
     } finally {
       controller = null;
     }
+    // H3 自动压缩接线(本会话裁决):每轮结束后过阈值门;不过 = null 零副作用,与手动共用 summarizeFn。
+    await runCompact(false);
   }
 }
 

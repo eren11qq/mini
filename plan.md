@@ -822,6 +822,11 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:`cli.ts` 接线后 ——会话中输入 `/compact`:当前厂商同模型流按 M4 七段生成纪要,compaction entry 落盘(payload = summary + firstKeptEntryId),随即 `rebuild()` 热替换 `context.messages`,下一条消息走压缩后上下文;**未达阈值照样压**(S-d `force`),压完窗口立即回落(同口径 usage 重测不再触发)。每轮 `message_end` 自动调 `compact()`(不带 force):阈值不过 = 返 null 零副作用,手动/自动共用同一生产 `summarizeFn`(= `buildSummarizePrompt(previousSummary)` + `serializeConversation(被弃段)` 喂当前 `streamFn`,裁决零在 harness)。发给 provider 的 system prompt 三段:中文固定骨架 + 工具清单(全量 name+description,随 `context.tools` 每轮重算 = AC-H3-5) + `<project_instructions>` 包裹的项目上下文(cwd 向上找 AGENTS.md/CLAUDE.md:跨目录恒近者赢——cwd=/a/b/c、/a/CLAUDE.md 与 /a/b/AGENTS.md 并存用近者;同目录 AGENTS.md 赢;皆无 = 该段省略)。`src/harness/` 除组装零压缩/阈值/配对裁决 —— 这就算 H3 完。
+- **seams 与用户确认**:4 纯缝自动测 + 接线 HITL(照 H1/H2)。S-a `buildSystemPrompt({tools, projectContext})`(harness 纯拼装)/ S-b `findProjectContext(cwd)`(向上近者 + 同目录 AGENTS>CLAUDE)/ S-c `serializeConversation(messages)`(memory 纯缝,`[role]` 行格式,thinking 块丢)/ S-d `CompactOptions.force?`(跳阈值一行)。自动压缩接线 = 本会话裁决(接,M3/M4 触发口径否则成死代码);骨架中文;同目录 AGENTS.md 赢。
+- **判卷**:通过(2026-09-14)— 四缝方案 + 自动压缩接线 + 中文骨架 + 同目录 AGENTS 赢,均经用户确认(AskUserQuestion)。
+- **验证**:四缝 12 测红→绿(S-d force 1 / S-c serialize 3 / S-a system-prompt 4 / S-b project-context 4);全量 114 passed + 1 skipped(smoke 需真 key);typecheck 0;eslint 0 error(memory `list()` 1 条既有 warning,非本刀引入);prettier 干净。非网络 CLI 探针两支:①空会话 `/compact` → 「当前会话无可压缩内容」不崩退 0;②cwd 放 AGENTS.md → 横幅出「项目上下文:<绝对路径>」(发往 provider 的 system 消息由 S1/S3 适配器既有 Story 31 测断言 systemPrompt 首位注入,harness 侧三段拼装 = S-a/S-b 覆盖)。真 key 人工演示待跑。
+- **已知残留**(H3 不修):①`/compact` 执行中 Ctrl+C:readline 在 ask 之外无 controller → SIGINT 直接退进程(压缩中途死 = M2 崩溃恢复语义兜底,torn 末行截回);②projectContext 启动读一次,会话中改 AGENTS.md 要到重启才反映(AC-H3-5 只承诺工具集);③拒压(最近单条 > keepRecent)时 `[error] compact:` 透传 memory 长英文错误(M4 遗留①分段兜底,DEFERRED 在册);④summarize 流无进度显示,长纪要等待期 stdout 静默。
 
 ### AC-H3-2: /compact 触发
 

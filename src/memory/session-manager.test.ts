@@ -613,3 +613,48 @@ describe("M4 compact:注入 summarizeFn 零网络", () => {
     }
   });
 });
+
+// ================= H3 手动 /compact =================
+
+describe("H3 compact:force 手动路径", () => {
+  it("AC-H3-2 usage 远低阈值:不带 force 返 null 零副作用;{force:true} 照样压 —— summarizeFn 只收刀口前旧段,compaction 落盘,rebuild 投影摘要+保留段", async () => {
+    const cwd = join(dir, "force");
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    sm.append({ type: "message", payload: user("u1") });
+    const keptId = sm.append({ type: "message", payload: asst("a1") }).id;
+    const file = await soleSessionFile("force");
+    const before = (await readFile(file, "utf8")).trimEnd().split("\n");
+
+    // 不触发(usage 口径零条)→ null,与 M3 行为一致。
+    expect(
+      await sm.compact({
+        contextWindow: 50000,
+        summarizeFn: () => {
+          throw new Error("非 force 未达阈值不得调用 summarizeFn");
+        },
+      }),
+    ).toBeNull();
+    expect((await readFile(file, "utf8")).trimEnd().split("\n")).toEqual(before);
+
+    // force:跳阈值,切点/配对逻辑照旧(tokenOf=100、keepRecent=100 → 刀口 = a1,u1 入旧段)。
+    let got: AgentMessage[] | undefined;
+    const entry = await sm.compact({
+      contextWindow: 50000,
+      keepRecent: 100,
+      tokenOf: () => 100,
+      force: true,
+      summarizeFn: (old) => {
+        got = old;
+        return "手动纪要";
+      },
+    });
+    expect(entry).not.toBeNull();
+    expect(got).toEqual([user("u1")]); // 只收被弃旧段
+    const comp = parse((await readFile(file, "utf8")).trimEnd().split("\n").at(-1)!);
+    expect(comp).toMatchObject({
+      type: "compaction",
+      payload: { summary: "手动纪要", firstKeptEntryId: keptId },
+    });
+    expect(sm.rebuild().messages).toEqual([user("手动纪要"), asst("a1")]);
+  });
+});

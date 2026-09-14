@@ -276,7 +276,8 @@ export class SessionManager {
       }
     }
     const reserve = opts.reserve ?? DEFAULT_RESERVE;
-    if (total <= opts.contextWindow - reserve) return null;
+    // H3:手动 /compact 走 force = 跳阈值照压;自动/缺省路径仍阈值门(AC-M3-2)。
+    if (!opts.force && total <= opts.contextWindow - reserve) return null;
 
     // 切点:从近往远按 tokenOf 累计,首个放不进 keepRecent 预算的 message 即刀口(下界 = floor)。
     const tokenOf = opts.tokenOf ?? defaultTokenOf;
@@ -342,6 +343,8 @@ export interface CompactOptions {
   summarizeFn: (toSummarize: AgentMessage[], previousSummary?: string) => string | Promise<string>;
   reserve?: number;
   keepRecent?: number;
+  // H3 S-d:手动 /compact = true,跳阈值检查(切点/配对/拒压照旧)。缺省 false = 阈值门。
+  force?: boolean;
   // 每 message token 估算(切点用);默认 pi 式启发 = chars/4 向上取整。
   tokenOf?: (message: AgentMessage) => number;
 }
