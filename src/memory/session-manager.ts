@@ -149,13 +149,34 @@ export class SessionManager {
   // M2 rebuild:读盘全部行(磁盘 = 真相源)→ 从 leaf 沿 parentId 回溯到根(header.id = 根哨兵)
   // → 路径正序投影 message 进 messages、路径上末条 model_change 定 model。
   // leafId 缺省 = 文件末行 entry(= 最新写入的 leaf,线性会话下与 M1 行为一致)。
-  // compaction 窗口投影 = M3。
+  // M3 compaction 窗口:刀口(firstKeptEntryId)前的已投影段折叠成摘要,盘上旧行不删。
   rebuild(leafId?: string): { messages: AgentMessage[]; model?: string } {
     const messages: AgentMessage[] = [];
+    // srcIds[i] = 第 i 条 message 的来源 entry id(摘要行 = null),供 compaction 截点定位。
+    const srcIds: (string | null)[] = [];
     let model: string | undefined;
     if (this.file === null) return { messages, model };
 
-    const lines = readFileSync(this.file, "utf8").trimEnd().split("\n");
+    for (const e of this.leafPath(leafId)) {
+      if (e.type === "message") {
+        messages.push(e.payload as AgentMessage);
+        srcIds.push(e.id);
+      } else if (e.type === "model_change") {
+        model = e.payload?.model;
+      } else if (e.type === "compaction") {
+        const p = e.payload as CompactionPayload;
+        const cut = p.firstKeptEntryId === null ? -1 : srcIds.indexOf(p.firstKeptEntryId);
+        const keptFrom = cut < 0 ? messages.length : cut; // null / 切点被更早 compaction 折叠 → 全折
+        messages.splice(0, keptFrom, { role: "user", content: p.summary });
+        srcIds.splice(0, keptFrom, null);
+      }
+    }
+    return { messages, model };
+  }
+
+  // 磁盘 → 全 entry map → 从 leafId(缺省 = 末行)沿 parentId 回溯到根,正序返回(rebuild/compact 共用)。
+  private leafPath(leafId?: string): (SessionEntry & { payload?: { model?: string } })[] {
+    const lines = readFileSync(this.file!, "utf8").trimEnd().split("\n");
     const header = JSON.parse(lines[0]!) as SessionHeader;
     const byId = new Map<string, SessionEntry & { payload?: { model?: string } }>();
     let curId: string | null = header.id; // 末行 entry id;仅 header 时停在根
@@ -174,10 +195,80 @@ export class SessionManager {
       id = e.parentId;
     }
     path.reverse();
-    for (const e of path) {
-      if (e.type === "message") messages.push(e.payload as AgentMessage);
-      else if (e.type === "model_change") model = e.payload?.model;
-    }
-    return { messages, model };
+    return path;
   }
+
+  // M3 compaction:触发 = 累计 usage > contextWindow − reserve;产物 = compaction entry(append,旧行不删);
+  // 切点 = 从近往远累计 tokenOf 至 keepRecent 处,刀口不劈 toolCall/toolResult 配对。
+  async compact(opts: CompactOptions): Promise<SessionEntry | null> {
+    if (this.file === null) return null;
+    const path = this.leafPath();
+    const messages = path.filter((e) => e.type === "message").map((e) => e.payload as AgentMessage);
+    const total = messages.reduce(
+      (n, m) =>
+        m.role === "assistant" && m.usage
+          ? n + m.usage.prompt_tokens + m.usage.completion_tokens
+          : n,
+      0,
+    );
+    const reserve = opts.reserve ?? DEFAULT_RESERVE;
+    if (total <= opts.contextWindow - reserve) return null;
+
+    // 切点:从近往远按 tokenOf 累计,首个放不进 keepRecent 预算的 message 即刀口。
+    const tokenOf = opts.tokenOf ?? defaultTokenOf;
+    const keepRecent = opts.keepRecent ?? DEFAULT_KEEP_RECENT;
+    let acc = 0;
+    let cut = path.length; // = 无保留段(近段单条已超 keepRecent → M4 拒压路径;M3 先按全弃摘要)
+    for (let i = path.length - 1; i >= 0; i--) {
+      const e = path[i]!;
+      if (e.type !== "message") continue;
+      const t = tokenOf(e.payload as AgentMessage);
+      if (acc + t > keepRecent) break;
+      acc += t;
+      cut = i;
+    }
+    // 刀口不劈 toolCall/toolResult 配对:保留段首条是 toolResult(其 toolCall 在被弃段)→ 回退到该 assistant。
+    while (cut > 0 && cut < path.length) {
+      const e = path[cut]!;
+      if (e.type !== "message" || (e.payload as AgentMessage).role !== "toolResult") break;
+      cut--;
+    }
+    // cut===0 = 全部塞得进 keepRecent 却仍触发阈值(usage 与体量解耦)→ 保留段为空,null 折叠全部。
+    const firstKeptEntryId = cut === 0 ? null : (path[cut]?.id ?? null);
+    const old = path
+      .slice(0, cut === 0 ? path.length : cut)
+      .filter((e) => e.type === "message")
+      .map((e) => e.payload as AgentMessage);
+
+    const summary = await opts.summarizeFn(old);
+    return this.append({
+      type: "compaction",
+      payload: { summary, firstKeptEntryId } satisfies CompactionPayload,
+    });
+  }
+}
+
+// compaction entry payload:纪要文本 + 刀口(保留段首条 entry id;null = 保留段为空)。
+export interface CompactionPayload {
+  summary: string;
+  firstKeptEntryId: string | null;
+}
+
+// 默认 token 估算 = pi estimateTokens 式启发(字符数/4 向上取整);精确计数不可得(无本地 tokenizer)。
+function defaultTokenOf(m: AgentMessage): number {
+  return Math.ceil(JSON.stringify(m).length / 4);
+}
+
+// DECISIONS ③ M3:触发 reserve 与切点 keepRecent 默认(128k 窗口约 112k 动刀)。
+export const DEFAULT_RESERVE = 16384;
+export const DEFAULT_KEEP_RECENT = 20000;
+
+export interface CompactOptions {
+  contextWindow: number;
+  // 生产 = 同模型生成七段纪要(M4);测试注入假函数 = 零网络。
+  summarizeFn: (toSummarize: AgentMessage[]) => string | Promise<string>;
+  reserve?: number;
+  keepRecent?: number;
+  // 每 message token 估算(切点用);默认 pi 式启发 = chars/4 向上取整。
+  tokenOf?: (message: AgentMessage) => number;
 }

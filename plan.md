@@ -646,6 +646,9 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:同一会话 append 消息+带 usage 的 assistant → `compact({contextWindow,summarizeFn})`:累计 usage > contextWindow−16384 触发、未超返回 null 零副作用(summarizeFn 不调用、文件不动);触发时从近往远按 `tokenOf` 累计 keepRecent(默认 20000)定刀口,写 compaction entry(payload={summary,firstKeptEntryId}),刀口若落 toolResult 则回退到配对 assistant(保留段成对);`rebuild()` = 摘要(user 角色)+保留段+新行;全程旧行逐字不删。四剧本任一不满足即判失败。
+- **判卷**:通过(2026-09-14)— seams 与用户确认:compact 挂 `SessionManager`(PRD memory 行三缝之一);阈值不满足返回 null 零副作用(手动 /compact 的 force 路径留 H2);摘要投影 = user 角色消息(零类型改动);tokenOf 注入、默认 chars/4 启发(精确 token 数无本地 tokenizer)
+- **验证**:AC-M3-2/3/4 红→绿。真红 3 处:`sm.compact is not a function`、`firstKeptEntryId: null`(切点未算)、刀口劈配对(期望 assistant id 实得 toolResult id);即时绿 0(全新增行为)。另修两处自造测试 bug:行数断点少算 header、heredoc 反引号被外层 bash 吞(改用 Write+cat 追加)。typecheck 0;eslint src/memory 0 问题;prettier 干净;全量 80 passed + 1 skipped(smoke)
 
 ### AC-M3-2: 触发阈值
 

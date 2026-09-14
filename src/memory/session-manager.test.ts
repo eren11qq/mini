@@ -310,3 +310,138 @@ describe("M1 model_change + rebuild", () => {
     expect(ctx.model).toBe("gpt-4o"); // 线性路径末条 model_change = 切后模型
   });
 });
+
+// ================= M3 compaction =================
+
+const asstU = (t: string, pt: number, ct: number): AssistantMessage => ({
+  ...asst(t),
+  usage: { prompt_tokens: pt, completion_tokens: ct },
+});
+
+describe("M3 compact:触发阈值", () => {
+  it("AC-M3-2 累计 usage 40000 > 50000−16384 → 触发:写 compaction entry(摘要进 payload);累计 7000 → 返回 null、summarizeFn 不调用、文件一字不动", async () => {
+    const cwd = join(dir, "trig");
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    sm.append({ type: "message", payload: user("u1") });
+    sm.append({ type: "message", payload: asstU("a1", 30000, 10000) }); // prompt+completion 合计 40000
+
+    const entry = await sm.compact({ contextWindow: 50000, summarizeFn: () => "摘要T" });
+    expect(entry).not.toBeNull();
+    expect(entry!.type).toBe("compaction");
+
+    const file = await soleSessionFile("trig");
+    const lines = (await readFile(file, "utf8")).trimEnd().split("\n");
+    expect(lines).toHaveLength(4); // header + 旧 2 行不动 + compaction 新行
+    const last = parse(lines[3]!);
+    expect(last["id"]).toBe(entry!.id);
+    expect(last).toMatchObject({ type: "compaction", payload: { summary: "摘要T" } });
+
+    // 不触发例:7000 ≪ 33616 → null,零副作用
+    const sm2 = new SessionManager({ baseDir: dir, cwd: join(dir, "trig2") });
+    sm2.append({ type: "message", payload: user("u1") });
+    sm2.append({ type: "message", payload: asstU("a1", 5000, 2000) });
+    const file2 = await soleSessionFile("trig2");
+    expect(
+      await sm2.compact({
+        contextWindow: 50000,
+        summarizeFn: () => {
+          throw new Error("不触发却调用了 summarizeFn");
+        },
+      }),
+    ).toBeNull();
+    const lines2 = (await readFile(file2, "utf8")).trimEnd().split("\n");
+    expect(lines2).toHaveLength(3); // header+u1+a1 原样;
+  });
+});
+
+describe("M3 compact:切点 firstKeptEntryId + rebuild 窗口", () => {
+  it("AC-M3-3 tokenOf=1000、keepRecent=2500 → firstKeptEntryId=倒数第2条;summarizeFn 只收被弃旧段;compact 后 append → rebuild = 摘要+保留段+新行;旧行逐字不删", async () => {
+    const cwd = join(dir, "cut");
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    const ids: string[] = [];
+    for (let i = 0; i < 24; i++)
+      ids.push(sm.append({ type: "message", payload: user(`m${i}`) }).id);
+    ids.push(sm.append({ type: "message", payload: asstU("m24", 40000, 0) }).id); // usage 供触发阈值
+    const file = await soleSessionFile("cut");
+    const before = (await readFile(file, "utf8")).trimEnd().split("\n");
+
+    let got: AgentMessage[] | undefined;
+    const entry = await sm.compact({
+      contextWindow: 50000,
+      keepRecent: 2500,
+      tokenOf: () => 1000,
+      summarizeFn: (old) => {
+        got = old;
+        return "摘要X";
+      },
+    });
+    expect(entry).not.toBeNull();
+    // 从近往远:1000(m24)+1000(m23)=2000 ≤2500,再加 m22 → 3000 超 → 切点 = m23
+    const comp = parse((await readFile(file, "utf8")).trimEnd().split("\n").at(-1)!);
+    expect(comp["payload"]).toMatchObject({ summary: "摘要X", firstKeptEntryId: ids[23] });
+    // 被弃旧段 = m0..m22(摘要只该看到刀口之前的)
+    expect(got).toEqual(Array.from({ length: 23 }, (_, i) => user(`m${i}`)));
+
+    sm.append({ type: "message", payload: user("新行") });
+    expect(sm.rebuild().messages).toEqual([
+      user("摘要X"),
+      user("m23"),
+      asstU("m24", 40000, 0),
+      user("新行"),
+    ]);
+
+    const after = (await readFile(file, "utf8")).trimEnd().split("\n");
+    expect(after.length).toBe(before.length + 2); // +compaction +新行
+    expect(after.slice(0, before.length)).toEqual(before); // Must not:旧行被删
+  });
+});
+
+const asstCall = (id: string): AssistantMessage => ({
+  role: "assistant",
+  content: [{ type: "toolCall", id, name: "read", arguments: { path: "a" } }],
+  stopReason: "tool_use",
+});
+const callU = (id: string): AssistantMessage => ({
+  ...asstCall(id),
+  usage: { prompt_tokens: 40000, completion_tokens: 0 },
+});
+const tr = (id: string) => ({
+  role: "toolResult" as const,
+  toolCallId: id,
+  toolName: "read",
+  content: [{ type: "text" as const, text: "ok" }],
+  isError: false,
+});
+
+describe("M3 compact:刀口不劈配对", () => {
+  it("AC-M3-4 预算断在 toolResult 上 → 切点回退到配对 assistant;保留段 toolCall/toolResult 成对;旧段 = 刀口前全部", async () => {
+    const cwd = join(dir, "pair");
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    const ids = [
+      sm.append({ type: "message", payload: user("u0") }).id,
+      sm.append({ type: "message", payload: asstCall("t1") }).id,
+      sm.append({ type: "message", payload: tr("t1") }).id,
+      sm.append({ type: "message", payload: user("u3") }).id,
+      sm.append({ type: "message", payload: callU("t2") }).id, // 触发阈值(usage 40000)
+      sm.append({ type: "message", payload: tr("t2") }).id,
+    ];
+    const file = await soleSessionFile("pair");
+
+    let got: AgentMessage[] | undefined;
+    await sm.compact({
+      contextWindow: 50000,
+      keepRecent: 1600,
+      // 天真累计:tr(t2)=1500 收下后 asst(t2)=700 → 2200 超 → 刀口本应落在 toolResult(t2) = 劈配对
+      tokenOf: (m) => (m.role === "toolResult" ? 1500 : m.role === "assistant" ? 700 : 100),
+      summarizeFn: (old) => {
+        got = old;
+        return "摘要P";
+      },
+    });
+    const comp = parse((await readFile(file, "utf8")).trimEnd().split("\n").at(-1)!);
+    expect(comp["payload"]).toMatchObject({ summary: "摘要P", firstKeptEntryId: ids[4] });
+    expect(got).toEqual([user("u0"), asstCall("t1"), tr("t1"), user("u3")]);
+    // 热替换窗口:摘要 + 完整配对
+    expect(sm.rebuild().messages).toEqual([user("摘要P"), callU("t2"), tr("t2")]);
+  });
+});
