@@ -774,6 +774,10 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:`cli.ts` 读三 flag(`--model <alias>` / `--continue` / `--resume`)后 ——`mini --model glm` 用 glm 配置行起(provider=dialect+base_url+key_env 全来自 `providers.ts` 表,加厂商只加一行);启动横幅显示 `mini · glm (glm-4-plus) · <cwd>`;会话内输入 `/model deepseek` 即热切(下一条消息起走新厂商、并 append 一行 `model_change` 存 alias),退出后 `mini --resume` 打编号清单(每行 mtime · model · sessionId 前 8 位)、选号进入该会话且**恢复切后厂商**(rebuild 末条 model_change 生效),`mini --continue` 直接接 mtime 最新会话续聊;坏 alias → `unknown provider "x" (可选:...)` 不崩、`--model` 缺值即报错、`--resume` 空目录提示新开。裁决全在纯缝,`src/harness/` 除组装零 loop/校验/压缩逻辑 —— 这就算 H2 完。
+- **seams 与用户确认**:4 纯缝自动测 + 其余 HITL(照 H1「harness 故意浅」)。S-a `resolveProvider(alias)`(providers.ts 配置行表)/ S-b `parseArgs(argv)`(无第三方库)/ S-c `SessionManager.list({baseDir,cwd})`(mtime 降序 + sessionId 解析 + 末条 model_change)/ S-d `resolveModel({cliModel,rebuiltModel,defaultAlias})` 优先级 = `--model` > resume 恢复 > 默认。会话内热切机制 = 本会话向用户确认后定的 `/model <alias>` 斜杠(推翻「/compact 唯一斜杠」→ 改记 DECISIONS H2 为两条);`model_change` 存 alias 非 model id(一行配置可翻回完整 provider)。启动仅当 `--model` 覆盖历史 model 才落 model_change,默认/纯恢复不写(避噪音)。
+- **验证**:四缝 13 测红→绿(providers 3 / args 5 / session-list 2 / resolve-model 3);全量 102 passed + 1 skipped(smoke 需真 key);typecheck 0;eslint src/harness 0;prettier 干净。非网络 CLI 探针三支:①`--model zzz` → `unknown provider "zzz" (可选:deepseek / glm)` 且 resolveProvider 先于 env 检查;②`--model`(缺值)→ 报错退 1;③`--resume` 空 HOME → 「无可恢复会话,新开一个」再 DEEPSEEK_API_KEY 未设置。真 key 人工演示待跑。
+- **已知残留**(H2 不修):①`PROVIDERS` 现仅 deepseek/glm 两行、且一行一模型(`models[0]`),`--model glm:flash` 式多模型 = DEFERRED;②`--resume` 选号后走 `SessionManager.open`,崩溃 torn 末行由 open() 截回,list() 只读不修(损坏行跳过扫描);③启动横幅的 model id 取 `provider.models[0].id`,多模型厂商暂不反映实际选中项。
 
 ### AC-H2-2: --model 启动
 

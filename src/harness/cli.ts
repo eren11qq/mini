@@ -1,6 +1,8 @@
-// H1 harness:组装 + 裸 readline + 流式 stdout。AC-H1-3 = 本文件零业务逻辑:
-// 停止判定、schema 校验、确认门规则、压缩全在 loop/stream/tools/memory 层,
-// 这里只做「拼参数 → 转事件 → 落盘」,唯一的加工是 provider 工具形态映射(纯搬运)。
+// H1+H2 harness:组装 + 裸 readline + 流式 stdout。AC-H1-3 = 本文件零业务逻辑:
+// 停止判定、schema 校验、确认门规则、压缩全在 loop/stream/tools/memory 层;H2 的厂商
+// 选择/热切/会话挑选的裁决也全在纯缝里(parseArgs / resolveProvider / resolveModel /
+// SessionManager.list —— 均可测)。这里只做「读 flag → 选会话 → 拼参数 → 转事件 → 落盘」
+// 的搬运,唯一加工是 provider 工具形态映射(纯)。
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -13,15 +15,14 @@ import { bashTool } from "../tools/bash.ts";
 import { editTool } from "../tools/edit.ts";
 import { readTool } from "../tools/read.ts";
 import { writeTool } from "../tools/write.ts";
+import { parseArgs } from "./args.ts";
+import { resolveProvider } from "./providers.ts";
+import { resolveModel } from "./resolve-model.ts";
 import { createRenderer } from "./renderer.ts";
 
-// H1 只有一行配置(选厂商 = H2 --model)。密钥只从 env 读(PRD 约束)。
-const PROVIDER: ProviderConfig = {
-  dialect: "openai-completions",
-  base_url: "https://api.deepseek.com/v1",
-  key_env: "DEEPSEEK_API_KEY",
-  models: [{ id: "deepseek-chat", contextWindow: 64000 }],
-};
+// 出厂厂商(无 --model、无历史 model_change 时)。--model <alias> 与 model_change payload
+// 存的都是这个表的 key(alias);dialect 由 createStream 内部派发(S3,上层零改动切方言)。
+const DEFAULT_ALIAS = "deepseek";
 
 const TOOLS: Tool[] = [readTool, writeTool, editTool, bashTool];
 
@@ -32,17 +33,56 @@ const providerTools = TOOLS.map((t) => ({
   ...(t.schema ? { parameters: t.schema } : {}),
 }));
 
-async function main(): Promise<void> {
-  if (!process.env[PROVIDER.key_env]) {
-    process.stderr.write(`${PROVIDER.key_env} 未设置(密钥只从 env 读)。\n`);
+// 密钥只从 env 读(PRD 约束)。缺 → 友好报错返回 false(启动缺 = 退出;热切缺 = 不切)。
+function ensureKey(provider: ProviderConfig): boolean {
+  if (process.env[provider.key_env]) return true;
+  process.stderr.write(`${provider.key_env} 未设置(密钥只从 env 读)。\n`);
+  return false;
+}
+
+// --resume 编号选择器(S-c list → 打表 → 读号 → 命中项)。选号非法 = 明确拒绝,不静默新开。
+async function pickSession(
+  ask: (q: string) => Promise<string>,
+  baseDir: string,
+  cwd: string,
+): Promise<SessionManager> {
+  const sessions = SessionManager.list({ baseDir, cwd });
+  if (sessions.length === 0) {
+    process.stdout.write("无可恢复会话,新开一个。\n");
+    return new SessionManager({ baseDir, cwd });
+  }
+  process.stdout.write("恢复哪个会话?\n");
+  sessions.forEach((s, i) =>
+    process.stdout.write(
+      `  ${i + 1}) ${new Date(s.mtimeMs).toISOString().slice(0, 19)} · ${s.model ?? DEFAULT_ALIAS} · ${s.sessionId.slice(0, 8)}\n`,
+    ),
+  );
+  const n = Number((await ask("编号: ")).trim());
+  const pick = sessions[n - 1];
+  if (!pick) {
+    process.stderr.write(`无效编号:${n}(1..${sessions.length})。\n`);
     process.exit(1);
   }
+  return SessionManager.open({ baseDir, cwd, sessionId: pick.sessionId });
+}
+
+async function main(): Promise<void> {
+  let args;
+  try {
+    args = parseArgs(process.argv.slice(2)); // S-b;坏 --model 缺值在此抛
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n`);
+    process.exit(1);
+  }
+
+  const baseDir = join(homedir(), ".mini", "sessions");
+  const cwd = process.cwd();
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   rl.on("close", () => process.exit(0)); // Ctrl+D
 
   // Story 16:Ctrl+C = 中断在跑的那一轮(stream + 工具),空转时 = 退出。
-  // 中断语义全在 loop(AC-L3-4/6:stopReason="aborted" → agent_end(reason)),这里只按开关。
+  // 中断语义全在 loop(AC-L3-4/6),这里只按开关。
   let controller: AbortController | null = null;
   rl.on("SIGINT", () => {
     if (controller) controller.abort();
@@ -52,23 +92,71 @@ async function main(): Promise<void> {
   const ask = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve));
   const render = createRenderer((s) => process.stdout.write(s));
 
-  const cwd = process.cwd();
-  const session = SessionManager.open({ baseDir: join(homedir(), ".mini", "sessions"), cwd });
+  // ---- 选会话(AC-H2-4/5):--resume 编号选择器 > --continue 最近 > 新会话 ----
+  let session: SessionManager;
+  if (args.resume) session = await pickSession(ask, baseDir, cwd);
+  else if (args.continue)
+    session = SessionManager.open({ baseDir, cwd }); // 无 sessionId = 最新
+  else session = new SessionManager({ baseDir, cwd });
+
+  // ---- 定厂商(AC-H2-2/3):resolveModel 优先级 = --model > 会话末条 model_change > 默认 ----
+  const rebuilt = session.rebuild();
+  let alias: string;
+  let provider: ProviderConfig;
+  try {
+    alias = resolveModel({
+      cliModel: args.model,
+      rebuiltModel: rebuilt.model,
+      defaultAlias: DEFAULT_ALIAS,
+    }); // S-d
+    provider = resolveProvider(alias); // S-a;坏 alias 抛
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n`);
+    process.exit(1);
+    return;
+  }
+  if (!ensureKey(provider)) process.exit(1);
+  // 启动即定厂商:仅当 --model 覆盖了续会话的历史 model 才落 model_change(默认/纯恢复 = 噪音,不写)。
+  if (args.model && args.model !== rebuilt.model) {
+    session.append({ type: "model_change", payload: { model: alias } });
+  }
+  let streamFn = createStream(provider);
+
   const context: LoopContext = {
-    // 接回最近会话历史(M2 rebuild 缝);挑会话 = H2 --continue/--resume 的事。
-    messages: session.rebuild().messages,
+    messages: rebuilt.messages, // M2 rebuild 缝:接回所选会话历史
     tools: providerTools,
   };
-  const streamFn = createStream(PROVIDER);
 
   process.stdout.write(
-    `mini · ${PROVIDER.models[0]!.id} · ${cwd}\n` +
-      `  历史 ${context.messages.length} 条 · Ctrl+C 中断当前轮 / 空转时退出\n`,
+    `mini · ${alias} (${provider.models[0]!.id}) · ${cwd}\n` +
+      `  历史 ${context.messages.length} 条 · /model <alias> 热切 · Ctrl+C 中断当前轮 / 空转时退出\n`,
   );
 
   for (;;) {
     const line = (await ask("> ")).trim();
     if (line === "") continue;
+
+    // 会话内热切(AC-H2-3):/model <alias> → 校验+换 provider+落 model_change entry。
+    // 只换下一条消息起生效;坏 alias / 缺密钥 → 保持原厂商、不污染 jsonl。
+    if (line === "/model" || line.startsWith("/model ")) {
+      const next = line.slice("/model".length).trim();
+      if (next === "") {
+        process.stdout.write("用法:/model <alias>\n");
+        continue;
+      }
+      try {
+        const np = resolveProvider(next); // S-a:未知 alias 抛(消息含可选厂商)
+        if (!ensureKey(np)) continue; // 缺密钥不切,保留原厂商
+        alias = next;
+        provider = np;
+        streamFn = createStream(provider);
+        session.append({ type: "model_change", payload: { model: alias } });
+        process.stdout.write(`已切换 → ${alias} (${provider.models[0]!.id})\n`);
+      } catch (e) {
+        process.stdout.write(`${(e as Error).message}\n`);
+      }
+      continue;
+    }
 
     const user: UserMessage = { role: "user", content: line };
     context.messages.push(user);

@@ -71,6 +71,14 @@ export interface SessionOpenOptions extends SessionManagerOptions {
   sessionId?: string; // 会话 uuidv7;缺省 = 时间戳最新
 }
 
+// H2 S-c list() 产物:--resume 编号选择器每行一条。
+export interface SessionSummary {
+  sessionId: string; // 文件名解析出的 uuidv7
+  file: string; // 绝对路径
+  mtimeMs: number; // 排序键(最新 = 最近使用)
+  model?: string; // 末条 model_change 的 alias;未切过 = undefined
+}
+
 export class SessionManager {
   private readonly dir: string;
   private readonly cwd: string;
@@ -123,6 +131,38 @@ export class SessionManager {
     sm.file = file;
     sm.leafId = (JSON.parse(lines[lines.length - 1]!) as { id: string }).id;
     return sm;
+  }
+
+  // H2 S-c:--resume 编号选择器数据源。列 <cwd编码>/ 下全部会话,最新在前(mtime 降序,
+  // 同 ms 按名字降序兜底,口径同 open())。sessionId 从文件名 <时间>_<uuidv7>.jsonl 解析;
+  // model = 该会话末条 model_change.payload.model(未切过则 undefined)。torn 末行跳过(选择器
+  // 只读不修,损坏交给 open())。
+  static list(opts: SessionManagerOptions): SessionSummary[] {
+    const sm = new SessionManager(opts);
+    if (!existsSync(sm.dir)) return [];
+    const out: SessionSummary[] = [];
+    for (const name of readdirSync(sm.dir)) {
+      if (!name.endsWith(".jsonl")) continue;
+      const file = join(sm.dir, name);
+      let model: string | undefined;
+      for (const raw of readFileSync(file, "utf8").trimEnd().split("\n").slice(1)) {
+        let e: SessionEntry & { payload?: { model?: string } };
+        try {
+          e = JSON.parse(raw);
+        } catch {
+          break; // torn 末行:停止扫描,保留已见 model
+        }
+        if (e.type === "model_change") model = e.payload?.model;
+      }
+      out.push({
+        sessionId: name.slice(name.indexOf("_") + 1, name.length - ".jsonl".length),
+        file,
+        mtimeMs: statSync(file).mtimeMs,
+        model,
+      });
+    }
+    out.sort((a, b) => b.mtimeMs - a.mtimeMs || (a.file < b.file ? 1 : -1));
+    return out;
   }
 
   // parentId 缺省 = 续当前 leaf(线性);显式传 = 挂到旧 entry → 生成分支(M2)。

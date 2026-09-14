@@ -1,0 +1,27 @@
+// H2 S-a 缝:厂商配置行表(G3「厂商≠方言」/ PRD story 2「加厂商只加配置行」)。
+// 加一家 = PROVIDERS 加一行,零改代码。--model <alias> / model_change entry 都存 alias,
+// 由此表翻成完整 ProviderConfig(dialect 决定用哪个适配器)。密钥只从 env 读(key_env 指向)。
+import type { ProviderConfig } from "../loop/types.ts";
+
+export const PROVIDERS: Record<string, ProviderConfig> = {
+  deepseek: {
+    dialect: "openai-completions",
+    base_url: "https://api.deepseek.com/v1",
+    key_env: "DEEPSEEK_API_KEY",
+    models: [{ id: "deepseek-chat", contextWindow: 64000 }],
+  },
+  glm: {
+    dialect: "openai-completions",
+    base_url: "https://open.bigmodel.cn/api/paas/v4",
+    key_env: "ZHIPU_API_KEY",
+    models: [{ id: "glm-4-plus", contextWindow: 128000 }],
+  },
+};
+
+export function resolveProvider(alias: string): ProviderConfig {
+  const p = PROVIDERS[alias];
+  if (!p) {
+    throw new Error(`unknown provider "${alias}" (可选:${Object.keys(PROVIDERS).join(" / ")})`);
+  }
+  return p;
+}
