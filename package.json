@@ -10,14 +10,20 @@
     "test:watch": "vitest",
     "format": "prettier --ignore-unknown --write .",
     "format:check": "prettier --ignore-unknown --check .",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "prepare": "husky"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.0.0",
+    "eslint": "^10.10.0",
+    "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",
     "lint-staged": "^16.1.5",
     "prettier": "^3.6.2",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0",
     "vitest": "^3.2.4"
   },
   "dependencies": {
