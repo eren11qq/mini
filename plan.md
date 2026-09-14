@@ -349,6 +349,7 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:runLoop 注册表含 read,假流吐 toolCall `read{path,offset:10,limit:5}` → 回填 toolResult 恰含第 10–14 行且行号/内容对齐(`N\t内容`);10000 行文件 `read{path}` 不带 limit → 返回 ≤2000 行且 ≤50KB、含末行、首行有截断提示;两路均不经确认直接执行(read 放行,确认 hook 归 T2)。任一不满足即判失败。
 
 ### AC-T1-2: offset/limit 切片
 
