@@ -31,35 +31,86 @@ function hasBadToolcall(tc: Map<number, { id: string; name: string; argString: s
   return undefined;
 }
 
+// mini 内部消息 → anthropic messages 线格式:
+// assistant toolCall→tool_use(input 为对象,免 JSON 字符串,异于 openai);
+// toolResult→user.tool_result,连续多条并入同一 user 消息(API 要求 role 交替);
+// thinking 块不回传(无 signature 的 thinking 会被真 API 拒),仅 UI 用(H1 淡显)。
+// systemPrompt → body.system(Story 31)。
+function toAnthropicMessages(context: LoopContext): { role: string; content: unknown[] }[] {
+  const out: { role: string; content: unknown[] }[] = [];
+  for (const m of context.messages) {
+    if (m.role === "user") {
+      out.push({ role: "user", content: [{ type: "text", text: m.content }] });
+    } else if (m.role === "assistant") {
+      const blocks: unknown[] = [];
+      for (const b of m.content) {
+        if (b.type === "text") blocks.push({ type: "text", text: b.text });
+        else if (b.type === "toolCall") {
+          blocks.push({ type: "tool_use", id: b.id, name: b.name, input: b.arguments ?? {} });
+        }
+      }
+      if (blocks.length > 0) out.push({ role: "assistant", content: blocks });
+    } else {
+      const block = {
+        type: "tool_result",
+        tool_use_id: m.toolCallId,
+        content: m.content.map((t) => t.text).join(""),
+        is_error: m.isError,
+      };
+      const last = out[out.length - 1];
+      const lastIsToolResult =
+        last?.role === "user" &&
+        (last.content[0] as { type?: string } | undefined)?.type === "tool_result";
+      if (lastIsToolResult) last!.content.push(block);
+      else out.push({ role: "user", content: [block] });
+    }
+  }
+  return out;
+}
+
 export function anthropicStream(
   config: ProviderConfig,
   transport: Transport,
   context: LoopContext,
+  signal?: AbortSignal,
 ): AsyncIterable<ProviderEvent> {
   return (async function* () {
     const url = `${config.base_url}/messages`;
     const key = process.env[config.key_env] ?? "";
     const model = config.models[0]?.id ?? "";
+    const body: Record<string, unknown> = {
+      model,
+      messages: toAnthropicMessages(context),
+      max_tokens: 8192,
+      stream: true,
+    };
+    if (context.systemPrompt) body.system = context.systemPrompt;
+    // tools:同 openai 线的注册表形态 {name,description,parameters} → input_schema。缺省不发。
+    if (Array.isArray(context.tools) && context.tools.length > 0) {
+      body.tools = context.tools.map((t: any) => ({
+        name: t?.name,
+        ...(t?.description ? { description: t.description } : {}),
+        input_schema: t?.parameters ?? { type: "object", properties: {} },
+      }));
+    }
     const init: RequestInit = {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        // 双鉴权头:真 api.anthropic.com 认 x-api-key;token-plan relay 常收
+        // Authorization: Bearer。同一 key 发两路,两边都兼容。
         "x-api-key": key,
+        Authorization: `Bearer ${key}`,
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify({
-        model,
-        messages: context.messages,
-        max_tokens: 8192,
-        stream: true,
-      }),
+      body: JSON.stringify(body),
     };
     const tc = new Map<number, { id: string; name: string; argString: string }>();
     let inputTokens = 0;
     let outputTokens = 0;
     yield { type: "start" };
     try {
-      for await (const line of transport(url, init)) {
+      for await (const line of transport(url, init, signal)) {
         if (line.startsWith("event:")) continue;
         const data = line.startsWith("data: ") ? line.slice(6) : line.trim();
         if (!data || data === "[DONE]") continue;

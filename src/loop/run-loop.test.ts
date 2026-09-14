@@ -521,6 +521,121 @@ describe("AC-L3-4 外部 abort 信号", () => {
   });
 });
 
+// AC-SEAM-1(PRD 审计①): done.usage 透传 → AssistantMessage.usage(Story 9,M3 数据源)
+async function* usageStream(): AsyncIterable<ProviderEvent> {
+  yield { type: "start" };
+  yield { type: "text_delta", delta: "hi" };
+  yield { type: "done", stopReason: "stop", usage: { prompt_tokens: 10, completion_tokens: 5 } };
+}
+
+describe("AC-SEAM-1 usage 透传落 AssistantMessage", () => {
+  it("done.usage → message_end 快照与 context.messages 末位均带 usage", async () => {
+    const streamFn: StreamFn = () => usageStream();
+    const context: LoopContext = { messages: [] };
+    const events: AgentEvent[] = [];
+    for await (const ev of runLoop(streamFn, [], context, {})) events.push(ev);
+
+    const msgEnd = events.find((e) => e.type === "message_end") as {
+      message: AssistantMessage;
+    };
+    expect(msgEnd.message.usage).toEqual({ prompt_tokens: 10, completion_tokens: 5 });
+    const last = context.messages[0] as AssistantMessage;
+    expect(last.usage).toEqual({ prompt_tokens: 10, completion_tokens: 5 });
+    // turn_end 消息同源
+    const turnEnd = events.find((e) => e.type === "turn_end") as {
+      message: AssistantMessage;
+    };
+    expect(turnEnd.message.usage).toEqual({ prompt_tokens: 10, completion_tokens: 5 });
+  });
+
+  it("done 无 usage → 字段缺省不抛(部分厂商不回 usage)", async () => {
+    const streamFn: StreamFn = () => fakeTextStream();
+    const context: LoopContext = { messages: [] };
+    for await (const _ of runLoop(streamFn, [], context, {})) void _;
+    const last = context.messages[0] as AssistantMessage;
+    expect(last.usage).toBeUndefined();
+  });
+});
+
+// AC-SEAM-5(PRD 审计⑤): thinking_delta 不再被 loop 丢弃 → ThinkingBlock 累积(H1 淡显来源)
+async function* thinkingStream(): AsyncIterable<ProviderEvent> {
+  yield { type: "start" };
+  yield { type: "thinking_delta", delta: "Let" };
+  yield { type: "thinking_delta", delta: " me" };
+  yield { type: "text_delta", delta: "hi" };
+  yield { type: "done", stopReason: "stop" };
+}
+
+describe("AC-SEAM-5 thinking_delta 进 partial", () => {
+  it("thinking 块累积 + text 块另起,快照协议同 text", async () => {
+    const streamFn: StreamFn = () => thinkingStream();
+    const context: LoopContext = { messages: [] };
+    const updates: AssistantMessage[] = [];
+    for await (const ev of runLoop(streamFn, [], context, {})) {
+      if (ev.type === "message_update") updates.push((ev as { message: AssistantMessage }).message);
+    }
+    expect(updates).toHaveLength(3);
+    const thinkingTexts = updates.map((m) =>
+      m.content.filter((b) => b.type === "thinking").map((b) => (b as { text: string }).text),
+    );
+    expect(thinkingTexts).toEqual([["Let"], ["Let me"], ["Let me"]]);
+    const last = context.messages[0] as AssistantMessage;
+    expect(last.content).toEqual([
+      { type: "thinking", text: "Let me" },
+      { type: "text", text: "hi" },
+    ]);
+  });
+});
+
+// AC-SEAM-6(PRD 审计⑥): options.signal 透传给 Tool.run(Story 16 / T4 杀进程树入口)
+describe("AC-SEAM-6 Tool.run 收到 signal", () => {
+  it("runLoop 把 options.signal 作为 run 第二参传入", async () => {
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const spyTool: Tool = {
+      name: "echo",
+      async run(_args: unknown, signal?: AbortSignal) {
+        receivedSignal = signal;
+        return { content: [{ type: "text", text: "ok" }], isError: false };
+      },
+    };
+    let turn = 0;
+    const streamFn: StreamFn = () => {
+      turn += 1;
+      if (turn === 1) {
+        return (async function* () {
+          yield { type: "start" };
+          yield { type: "toolcall_delta", id: "s1", name: "echo", arguments: {} };
+          yield { type: "done", stopReason: "tool_use" };
+        })();
+      }
+      return (async function* () {
+        yield { type: "start" };
+        yield { type: "done", stopReason: "stop" };
+      })();
+    };
+    const context: LoopContext = { messages: [{ role: "user", content: "go" }] };
+    for await (const _ of runLoop(streamFn, [spyTool], context, { signal: controller.signal }))
+      void _;
+    expect(receivedSignal).toBe(controller.signal);
+  });
+});
+
+// AC-SEAM-S16(PRD 审计⑥配套): signal 同时传进 streamFn 第二参(真 adapter 断流用)
+describe("AC-SEAM-S16 streamFn 收到 signal", () => {
+  it("loop 以 (context, signal) 调 streamFn", async () => {
+    const controller = new AbortController();
+    let received: AbortSignal | undefined;
+    const streamFn: StreamFn = (_context, signal) => {
+      received = signal;
+      return fakeTextStream();
+    };
+    const context: LoopContext = { messages: [] };
+    for await (const _ of runLoop(streamFn, [], context, { signal: controller.signal })) void _;
+    expect(received).toBe(controller.signal);
+  });
+});
+
 // AC-L3-5: 整批 terminate
 // Scenario:某批 toolCall 中一个标 terminate
 // Action:调 runLoop

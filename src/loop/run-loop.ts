@@ -10,6 +10,7 @@ import type {
   ToolCallBlock,
   ToolResult,
   ToolResultMessage,
+  ThinkingBlock,
 } from "./types.ts";
 
 // mini runLoop:L2。toolCall 执行 + toolResult 回填 + 同批串行 + maxTurns 保险丝。
@@ -48,7 +49,8 @@ export async function* runLoop(
     let pushed = false;
     let messageEnded = false;
 
-    for await (const event of streamFn(context)) {
+    // Story 16:signal 传进 streamFn → 真 adapter 透传 transport→fetch(流可中断)。
+    for await (const event of streamFn(context, signal)) {
       // AC-L3-4:外部 abort 缝内查。命中 → 该 turn 立即停。
       if (signal?.aborted) {
         partial.stopReason = "aborted";
@@ -78,6 +80,8 @@ export async function* runLoop(
         }
         case "done": {
           partial.stopReason = event.stopReason;
+          // Story 9 / AC-S1-3:usage 透传落 AssistantMessage.usage(M3 压缩阈值数据源)。
+          if (event.usage) partial.usage = event.usage;
           if (pushed) context.messages[context.messages.length - 1] = partial;
           yield { type: "message_end", message: snapshot(partial) };
           messageEnded = true;
@@ -100,8 +104,15 @@ export async function* runLoop(
           messageEnded = true;
           break;
         }
+        case "thinking_delta": {
+          // H1"thinking 淡显"来源:累积进 ThinkingBlock(同 text_delta 快照协议)。
+          // 序列化回 provider 时 thinking 块会被方言适配器丢弃(不可回传),仅 UI 用。
+          appendThinking(partial, event.delta);
+          if (pushed) context.messages[context.messages.length - 1] = partial;
+          yield { type: "message_update", message: snapshot(partial) };
+          break;
+        }
         default:
-          // thinking_delta → S3 覆盖
           break;
       }
       if (event.type === "done" || event.type === "error") break;
@@ -154,8 +165,9 @@ export async function* runLoop(
         args: call.arguments,
       };
       // 工具不在注册表 → error result 回喂(不断循环)。tool.run 契约不 throw。
+      // Story 16 / T4:signal 透传给 run,bash 工具据此超时/中断杀进程树。
       const result: ToolResult = tool
-        ? await tool.run(call.arguments)
+        ? await tool.run(call.arguments, signal)
         : { content: [{ type: "text", text: `tool not found: ${call.name}` }], isError: true };
       yield {
         type: "tool_execution_end",
@@ -201,6 +213,17 @@ function appendText(m: AssistantMessage, delta: string): void {
     (last as TextBlock).text += delta;
   } else {
     m.content.push({ type: "text", text: delta });
+  }
+}
+
+// thinking_delta 同 text_delta 累积语义:末块是 thinking 则拼接,否则新起一块
+//(thinking 与 text 交错时各留各的块)。
+function appendThinking(m: AssistantMessage, delta: string): void {
+  const last = m.content[m.content.length - 1];
+  if (last && last.type === "thinking") {
+    (last as ThinkingBlock).text += delta;
+  } else {
+    m.content.push({ type: "thinking", text: delta });
   }
 }
 

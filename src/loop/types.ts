@@ -31,6 +31,8 @@ export interface AssistantMessage {
   content: ContentBlock[];
   stopReason: StopReason;
   errorMessage?: string;
+  // Story 9 / AC-S1-3:provider done.usage 由 loop 透传落此,M3 压缩阈值与成本核对的数据源。
+  usage?: Usage;
 }
 export interface ToolResultMessage {
   role: "toolResult";
@@ -95,14 +97,18 @@ export type Transport = (
 
 // ---- streamFn 缝 ----
 // 注:(config, context) 形态的 config 绑定留 S1 真 adapter;L1 假流只用 context。
-export type StreamFn = (context: LoopContext) => AsyncIterable<ProviderEvent>;
+// signal:Story 16"中断当前 LLM 流"——loop 把 options.signal 传进来,真 adapter 透传给
+// transport→fetch(原 L3 注释"留 S1"的欠账);假流可忽略第二参。
+export type StreamFn = (context: LoopContext, signal?: AbortSignal) => AsyncIterable<ProviderEvent>;
 
 // ---- tool 注册表缝(L2)----
 // Tool.run 失败靠返回 isError:true ToolResult 回喂,不 throw(L3 error 进流同样约束)。
 // confirm gate 留 T2(beforeToolCall hook),L2 工具直接执行。
 export interface Tool {
   name: string;
-  run(args: unknown): Promise<ToolResult>;
+  // Story 16 / T4:loop 把 options.signal 透传给 run,工具(尤其 bash)据此中断/杀进程树。
+  // 可选参 → 不观测 signal 的既有工具零改动。
+  run(args: unknown, signal?: AbortSignal): Promise<ToolResult>;
 }
 export interface ToolResult {
   content: TextBlock[];

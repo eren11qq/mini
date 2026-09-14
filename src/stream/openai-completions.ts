@@ -44,25 +44,65 @@ const FINISH_TO_STOP: Record<string, StopReason> = {
   content_filter: "error",
 };
 
-// 真 transport:fetch POST 取 SSE,逐行 yield。signal 透传给 fetch(L3 abort 兜底)。
-// 非 ok 抛 TransportError(S2 retry 据 status 区分 5xx/4xx)。
+// Story 8 真路径 timeout 入口(此前 isTimeout 只有 mock 能造):等待下一个 chunk 时
+// 起空闲计时,超 TRANSPORT_IDLE_TIMEOUT_MS 无新字节(覆盖连接/TTFB/流断)→ abort 并抛
+// TransportError{isTimeout} → withRetry 重试 1 次。计时只在 read 等待期运行,yield 给
+// 消费者(下游跑工具再慢)不误伤。外部 signal(Story 16 断流)转发至 fetch。
+export const TRANSPORT_IDLE_TIMEOUT_MS = 30_000;
 const defaultTransport: Transport = async function* (url, init, signal) {
-  const res = await fetch(url, { ...init, signal });
-  if (!res.ok || !res.body) {
-    throw new TransportError(`HTTP ${res.status}`, { status: res.status });
-  }
-  const dec = new TextDecoder();
-  let buf = "";
-  for await (const chunk of res.body) {
-    buf += dec.decode(chunk, { stream: true });
-    let i: number;
-    while ((i = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, i);
-      buf = buf.slice(i + 1);
-      if (line) yield line;
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, TRANSPORT_IDLE_TIMEOUT_MS);
+  };
+  const disarm = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
     }
+  };
+  const timeoutOrRethrow = (e: unknown): never => {
+    if (timedOut) throw new TransportError("transport idle timeout", { isTimeout: true });
+    throw e;
+  };
+  const onExternalAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", onExternalAbort, { once: true });
   }
-  if (buf) yield buf;
+  try {
+    arm();
+    const res = await fetch(url, { ...init, signal: controller.signal }).catch(timeoutOrRethrow);
+    disarm();
+    if (!res.ok || !res.body) {
+      throw new TransportError(`HTTP ${res.status}`, { status: res.status });
+    }
+    const dec = new TextDecoder();
+    let buf = "";
+    const reader = res.body.getReader();
+    for (;;) {
+      arm();
+      const r = await reader.read().catch(timeoutOrRethrow);
+      disarm();
+      if (r.done) break;
+      buf += dec.decode(r.value, { stream: true });
+      let i: number;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        if (line) yield line;
+      }
+    }
+    if (buf) yield buf;
+  } finally {
+    disarm();
+    if (signal) signal.removeEventListener("abort", onExternalAbort);
+  }
 };
 
 // salvage:把分多 delta 累积的 toolcall arguments 前缀尽力解析成对象。
@@ -174,11 +214,19 @@ export function withRetry(transport: Transport, retries = 1): Transport {
   return async function* (url, init, signal) {
     let lastErr: unknown;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
+      let yielded = false;
       try {
-        for await (const line of transport(url, init, signal)) yield line;
+        for await (const line of transport(url, init, signal)) {
+          yielded = true;
+          yield line;
+        }
         return;
       } catch (e) {
         lastErr = e;
+        // 只在未吐出任何一行前重试。中途断流从头重放会让上层重复收 start/text_delta
+        // (adapter 已把前缀事件发出去了)→ 直接上抛,由 adapter 编成 error 事件。
+        // PRD 风险节(relay 抖动史)针对的是握手失败,不是半截流重放。
+        if (yielded) throw e;
         if (attempt < retries && isRetryable(e)) continue;
         throw e;
       }
@@ -191,17 +239,57 @@ export function withRetry(transport: Transport, retries = 1): Transport {
 // withRetry 统一包一层(两边共 Transport 缝)。S1 缝签名不变 → 上层零改动(AC-S3-3)。
 export function createStream(config: ProviderConfig, deps?: StreamDeps): StreamFn {
   const transport = withRetry(deps?.transport ?? defaultTransport, 1);
-  return function stream(context: LoopContext): AsyncIterable<ProviderEvent> {
+  return function stream(context: LoopContext, signal?: AbortSignal): AsyncIterable<ProviderEvent> {
     return config.dialect === "anthropic-messages"
-      ? anthropicStream(config, transport, context)
-      : openaiStream(config, transport, context);
+      ? anthropicStream(config, transport, context, signal)
+      : openaiStream(config, transport, context, signal);
   };
+}
+
+// mini 内部消息 → openai chat 线格式(story 14 配对靠 tool_call_id):
+// user 原样;assistant text 拼接 + toolCall→tool_calls(arguments 必须 JSON 字符串);
+// toolResult→{role:"tool",tool_call_id};thinking 块不回传(UI 用,provider 无此通道)。
+// systemPrompt → 首位 system 消息(Story 31)。
+function toOpenaiMessages(context: LoopContext): unknown[] {
+  const out: unknown[] = [];
+  if (context.systemPrompt) out.push({ role: "system", content: context.systemPrompt });
+  for (const m of context.messages) {
+    if (m.role === "user") {
+      out.push({ role: "user", content: m.content });
+    } else if (m.role === "assistant") {
+      let text = "";
+      const calls: unknown[] = [];
+      for (const b of m.content) {
+        if (b.type === "text") text += b.text;
+        else if (b.type === "toolCall") {
+          calls.push({
+            id: b.id,
+            type: "function",
+            function: { name: b.name, arguments: JSON.stringify(b.arguments ?? {}) },
+          });
+        }
+      }
+      out.push({
+        role: "assistant",
+        content: calls.length > 0 ? text || null : text,
+        ...(calls.length > 0 ? { tool_calls: calls } : {}),
+      });
+    } else {
+      out.push({
+        role: "tool",
+        tool_call_id: m.toolCallId,
+        content: m.content.map((t) => t.text).join(""),
+      });
+    }
+  }
+  return out;
 }
 
 function openaiStream(
   config: ProviderConfig,
   transport: Transport,
   context: LoopContext,
+  signal?: AbortSignal,
 ): AsyncIterable<ProviderEvent> {
   return (async function* () {
     const url = `${config.base_url}/chat/completions`;
@@ -211,7 +299,7 @@ function openaiStream(
     // 缺省不发 tools 字段(空数组部分 API 拒收)。
     const body: Record<string, unknown> = {
       model,
-      messages: context.messages,
+      messages: toOpenaiMessages(context),
       stream: true,
     };
     if (Array.isArray(context.tools) && context.tools.length > 0) {
@@ -235,7 +323,7 @@ function openaiStream(
     const tc = new Map<number, { id: string; name: string; argString: string }>();
     yield { type: "start" };
     try {
-      for await (const line of transport(url, init)) {
+      for await (const line of transport(url, init, signal)) {
         const data = line.startsWith("data: ") ? line.slice(6) : line.trim();
         if (!data || data === "[DONE]") continue;
         let json: any;

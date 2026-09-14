@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createStream } from "./openai-completions.js";
+import { createStream, TransportError } from "./openai-completions.js";
 import type { ProviderConfig, ProviderEvent, Transport } from "../loop/types.js";
 
 // AC-S1-2:协议映射
@@ -310,6 +310,110 @@ const truncatedFixture = [
   `data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
   `data: [DONE]`,
 ];
+
+// AC-SEAM-2/3(PRD 审计②③): openai 线消息序列化器 —— mini 内部格式不再裸发。
+// Scenario:context 含 systemPrompt + user + assistant(thinking+text+toolCall) + toolResult
+// Expected:body.messages = system 首位;assistant→content 拼 text+tool_calls(arguments JSON
+//         字符串,thinking 丢弃);toolResult→{role:"tool",tool_call_id}。
+describe("AC-SEAM-2/3 openai 消息序列化 + system", () => {
+  it("内部格式 → openai 线格式逐条映射", async () => {
+    let captured: RequestInit | null = null;
+    const transport: Transport = async function* (_url, init) {
+      captured = init;
+      yield `data: [DONE]`;
+    };
+    const streamFn = createStream(deepseekConfig, { transport });
+    for await (const _ of streamFn({
+      systemPrompt: "SYS",
+      messages: [
+        { role: "user", content: "call echo" },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", text: "hmm" },
+            { type: "text", text: "doing" },
+            { type: "toolCall", id: "c1", name: "echo", arguments: { path: "/a" } },
+          ],
+          stopReason: "tool_use",
+        },
+        {
+          role: "toolResult",
+          toolCallId: "c1",
+          toolName: "echo",
+          content: [{ type: "text", text: "result" }],
+          isError: false,
+        },
+      ],
+    }))
+      void _;
+    const body = JSON.parse(captured!.body as string);
+    expect(body.messages).toEqual([
+      { role: "system", content: "SYS" },
+      { role: "user", content: "call echo" },
+      {
+        role: "assistant",
+        content: "doing",
+        tool_calls: [
+          {
+            id: "c1",
+            type: "function",
+            function: { name: "echo", arguments: '{"path":"/a"}' },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "c1", content: "result" },
+    ]);
+  });
+
+  it("systemPrompt 缺省 → 无 system 消息;assistant 纯 toolCall → content null", async () => {
+    let captured: RequestInit | null = null;
+    const transport: Transport = async function* (_url, init) {
+      captured = init;
+      yield `data: [DONE]`;
+    };
+    const streamFn = createStream(deepseekConfig, { transport });
+    for await (const _ of streamFn({
+      messages: [
+        { role: "user", content: "x" },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "c2", name: "t", arguments: {} }],
+          stopReason: "tool_use",
+        },
+      ],
+    }))
+      void _;
+    const body = JSON.parse(captured!.body as string);
+    expect(body.messages[0].role).toBe("user");
+    expect(body.messages[1]).toEqual({
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "c2", type: "function", function: { name: "t", arguments: "{}" } }],
+    });
+  });
+});
+
+// AC-SEAM-8(PRD 审计⑧): withRetry 中途失败不从头重放(否则上层重复收 start/text_delta)。
+// Scenario:transport 吐出首行后断流抛 isTimeout(半截流)。
+// Expected:不重试(calls=1),流以 error 收尾;text_delta "Hi" 只出现一次(无双份)。
+describe("AC-SEAM-8 中途断流不重放", () => {
+  it("已吐行后 timeout → transport 只调 1 次 + 事件不重复", async () => {
+    let n = 0;
+    const transport: Transport = async function* () {
+      n += 1;
+      yield `data: {"choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}`;
+      throw new TransportError("timeout", { isTimeout: true });
+    };
+    const streamFn = createStream(deepseekConfig, { transport });
+    const events: ProviderEvent[] = [];
+    for await (const ev of streamFn({ messages: [] })) events.push(ev);
+
+    expect(n).toBe(1);
+    expect(events.filter((e) => e.type === "start")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "text_delta")).toHaveLength(1);
+    expect(events.at(-1)?.type).toBe("error");
+  });
+});
 
 describe("AC-S1-7 定稿截断整批拒执", () => {
   it("截断 → 流 error 事件且无 done(stopReason=tool_use)", async () => {

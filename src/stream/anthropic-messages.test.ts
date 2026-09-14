@@ -132,6 +132,106 @@ describe("AC-S3-2 thinking_delta 映射", () => {
   });
 });
 
+// AC-SEAM-2/3/4/9(PRD 审计②③④⑨): anthropic 线请求体 —— 序列化器 + system + tools + 双鉴权头。
+// Scenario:context = systemPrompt + user + assistant(thinking+text+toolCall) + 两条连续 toolResult,
+//         tools 含 echo 注册表项。
+// Expected:messages 为 anthropic 块格式;连续 toolResult 并入同一 user(role 交替);thinking 丢弃;
+//         body.system 存在;tools[].input_schema 映射;x-api-key 与 Authorization: Bearer 双头。
+describe("AC-SEAM-2/3/4/9 anthropic 请求体", () => {
+  it("内部格式 → anthropic 线格式 + system + tools + 双头", async () => {
+    let captured: { url: string; init: RequestInit } | null = null;
+    const transport: Transport = async function* (url, init) {
+      captured = { url, init };
+      yield `data: {"type":"message_stop"}`;
+    };
+    process.env.ANTHROPIC_API_KEY = "test-key-xxx-not-real";
+    try {
+      const streamFn = createStream(anthropicCfg, { transport });
+      for await (const _ of streamFn({
+        systemPrompt: "SYS",
+        messages: [
+          { role: "user", content: "call echo" },
+          {
+            role: "assistant",
+            content: [
+              { type: "thinking", text: "hmm" },
+              { type: "text", text: "doing" },
+              { type: "toolCall", id: "c1", name: "echo", arguments: { path: "/a" } },
+            ],
+            stopReason: "tool_use",
+          },
+          {
+            role: "toolResult",
+            toolCallId: "c1",
+            toolName: "echo",
+            content: [{ type: "text", text: "r1" }],
+            isError: false,
+          },
+          {
+            role: "toolResult",
+            toolCallId: "c2",
+            toolName: "echo",
+            content: [{ type: "text", text: "r2" }],
+            isError: true,
+          },
+        ],
+        tools: [
+          {
+            name: "echo",
+            description: "echo a path",
+            parameters: { type: "object", properties: { path: { type: "string" } } },
+          },
+        ],
+      }))
+        void _;
+    } finally {
+      delete process.env.ANTHROPIC_API_KEY;
+    }
+    const body = JSON.parse(captured!.init.body as string);
+    expect(body.system).toBe("SYS");
+    expect(body.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "call echo" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "doing" },
+          { type: "tool_use", id: "c1", name: "echo", input: { path: "/a" } },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "c1", content: "r1", is_error: false },
+          { type: "tool_result", tool_use_id: "c2", content: "r2", is_error: true },
+        ],
+      },
+    ]);
+    expect(body.tools).toEqual([
+      {
+        name: "echo",
+        description: "echo a path",
+        input_schema: { type: "object", properties: { path: { type: "string" } } },
+      },
+    ]);
+    const headers = captured!.init.headers as Record<string, string>;
+    expect(headers["x-api-key"]).toBe("test-key-xxx-not-real");
+    expect(headers.Authorization).toBe("Bearer test-key-xxx-not-real");
+  });
+
+  it("systemPrompt/tools 缺省 → body 不含对应字段", async () => {
+    let captured: RequestInit | null = null;
+    const transport: Transport = async function* (_url, init) {
+      captured = init;
+      yield `data: {"type":"message_stop"}`;
+    };
+    const streamFn = createStream(anthropicCfg, { transport });
+    for await (const _ of streamFn({ messages: [{ role: "user", content: "hi" }] })) void _;
+    const body = JSON.parse(captured!.body as string);
+    expect(body.system).toBeUndefined();
+    expect(body.tools).toBeUndefined();
+  });
+});
+
 // AC-S3-4: 加厂商只配置行
 // Scenario:加 glm/kimi(同方言)厂商
 // Action:仅加配置行
