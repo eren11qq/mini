@@ -12,6 +12,7 @@ import type {
 } from "../loop/types.js";
 import { readTool } from "./read.js";
 import { editTool } from "./edit.js";
+import { writeTool } from "./write.js";
 import { stat } from "node:fs/promises";
 import type { Tool } from "../loop/types.js";
 
@@ -207,6 +208,29 @@ describe("T2 AC-T2-5: beforeToolCall confirm yes/no + read 豁免", () => {
     expect(prompts).toHaveLength(0);
     const toolMsg = context.messages.find((m): m is ToolResultMessage => m.role === "toolResult");
     expect(toolMsg?.isError).toBe(false);
+  });
+});
+
+describe("T3 AC-T3-4: write 过确认(no → 不写文件、result skipped)", () => {
+  it("confirm 假应答 no → run 未执行、文件不存在、result 标 user rejected(= skipped 词汇)", async () => {
+    const path = join(dir, "t34-never.txt");
+    const { prompts, confirm } = confirmSpy("no");
+
+    const context: LoopContext = { messages: [{ role: "user", content: "write it" }] };
+    await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("c1", "write", { path, content: "SECRET" })),
+        [writeTool],
+        context,
+        { confirm },
+      ),
+    );
+
+    expect(prompts).toHaveLength(1); // write 未声明 skipConfirm → 必过安检
+    await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" }); // 文件不存在
+    const toolMsg = context.messages.find((m): m is ToolResultMessage => m.role === "toolResult");
+    expect(toolMsg?.isError).toBe(true);
+    expect(toolMsg?.content.map((b) => b.text).join("")).toMatch(/user rejected/i);
   });
 });
 
