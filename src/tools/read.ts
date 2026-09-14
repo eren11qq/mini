@@ -35,6 +35,8 @@ function tailTruncate(numbered: string[]): string {
 
 export const readTool: Tool = {
   name: "read",
+  // AC-T2-5:只读工具放行,不过确认门(DECISIONS T3:确认范围 = bash/write/edit)。
+  skipConfirm: true,
   async run(args: unknown): Promise<ToolResult> {
     // 契约(types.ts:105 注):任何失败转 isError:true 回喂,run 不 throw。
     try {

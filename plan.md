@@ -387,6 +387,9 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:调 `runLoop` 喂假流 + 临时文件,六剧本:①`edit{path,edits:[{aaa→AAA},{bbb→BBB}]}`、confirm 应答 yes → 落盘含 AAA+BBB、第 2 圈纯文本停;②edits 一命中一不命中 → 文件字节级不变、toolResult isError:true 回喂、第 2 turn 照常起;③假 args 缺 edits 字段 → JSON Schema 校验 error result 回喂、不崩、第 2 turn 照常起;④`bash{command:"git push"}` 应答 always → 执行且 rules.json 落盘含 `{tool:"bash",prefix:"git:*"}`,同 rulesPath 重跑该命令 → confirm 零调用;⑤删 rules.json 重跑 → confirm 恢复被调;⑥read 任何剧本 confirm 恒零调用、未声明豁免的假 `rmrf` → confirm 必调、应答 no → `rmrf.run` 零调用、result 标 skipped。六剧本任一不满足即判失败;确认与 rules 逻辑全在 loop 侧(rmrf 测试源零确认代码),loop 源零 try/catch。
+- **seams(已确认 2026-09-14)**:①`editTool` via `Tool.run`(临时文件磁盘状态断言);②`Tool.schema?` JSON Schema + ajv(D1:第一个运行时依赖),loop 在 run 前校验,失败转 error toolResult(照 pi prepare→validate→beforeCall);③`options.confirm(prompt)` + `options.rulesPath` 注入,`Tool.skipConfirm?` 缺省 false=过检、read 置 true 放行;④rules.json 明文 `{tool,prefix}[]`,`git:*`=首词边界匹配,`node:fs` 回调形态读(不 throw,守 loop 零 try/catch),`*`/空前缀拒写(always 降级一次性 yes);⑤no → tool_execution_start/end 仍配对,result `isError:true`+"user rejected" 回喂续转。edit 签名照 pi `tools/edit.ts:32-40` = `{path,edits:[{oldText,newText}]}`(plan AC 例省略 path 已补)。
+- **判卷**:通过(2026-09-14)— 六剧本验收句 + seams(D1 ajv / D2 edit path / D3 Tool 扩 schema?+skipConfirm?+prefixOf? / D4 rulesPath 注入)与用户确认
 
 ### AC-T2-2: edit 全批命中落盘
 

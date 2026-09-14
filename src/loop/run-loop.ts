@@ -12,6 +12,8 @@ import type {
   ToolResultMessage,
   ThinkingBlock,
 } from "./types.ts";
+import { validateArgs } from "./validate.js";
+import { appendRule, isValidSeed, loadRules, type Rule } from "./rules.js";
 
 // mini runLoop:L2。toolCall 执行 + toolResult 回填 + 同批串行 + maxTurns 保险丝。
 // 双层 while 形状照抄 pi(steering/followUp 队列不挂 → 外层由停止条件退)。
@@ -27,6 +29,9 @@ export async function* runLoop(
   const maxTurns = options.maxTurns ?? 50;
   const signal = options.signal;
   const newMessages: AgentMessage[] = [];
+  // T2-7:rules 每次 agent run 开头读一遍(手删文件 = 下次 run 重新弹,撤销正路)。
+  const rulesPath = options.rulesPath;
+  let rules: Rule[] = rulesPath ? await loadRules(rulesPath) : [];
 
   yield { type: "agent_start" };
 
@@ -165,10 +170,45 @@ export async function* runLoop(
         args: call.arguments,
       };
       // 工具不在注册表 → error result 回喂(不断循环)。tool.run 契约不 throw。
+      // AC-T2-4:schema 在 run 前校验(照 pi prepare→validate),失败 → error result,不执行 run。
       // Story 16 / T4:signal 透传给 run,bash 工具据此超时/中断杀进程树。
-      const result: ToolResult = tool
-        ? await tool.run(call.arguments, signal)
-        : { content: [{ type: "text", text: `tool not found: ${call.name}` }], isError: true };
+      let result: ToolResult;
+      if (!tool) {
+        result = {
+          content: [{ type: "text", text: `tool not found: ${call.name}` }],
+          isError: true,
+        };
+      } else {
+        // 顺序照 pi prepare→validate→beforeToolCall:先挡无效 args,再费用户一次确认。
+        const vErr = tool.schema ? validateArgs(tool.schema, call.arguments) : null;
+        if (vErr !== null) {
+          result = { content: [{ type: "text", text: vErr }], isError: true };
+        } else {
+          // AC-T2-5/6/7/8 beforeToolCall 确认门(逻辑在 loop,story 24;confirm 缺省 = 放行,
+          // PRD line 100)。AC-T2-7:命中 rules(tool+prefix 相等)免弹;always 落盘,
+          // `*`/空种子拒写(AC-T2-8 无一键全允许)退化为一次性 yes。
+          const subject = tool.prefixOf?.(call.arguments) ?? JSON.stringify(call.arguments);
+          const preapproved = rules.some((r) => r.tool === tool.name && r.prefix === subject);
+          if (tool.skipConfirm || !options.confirm || preapproved) {
+            result = await tool.run(call.arguments, signal);
+          } else {
+            const answer = options.confirm(
+              `Execute: ${tool.name}(${JSON.stringify(call.arguments)})? ❯1 Yes / 2 Yes, always / 3 No`,
+            );
+            if (answer === "no") {
+              result = {
+                content: [{ type: "text", text: `user rejected: ${tool.name}` }],
+                isError: true,
+              };
+            } else {
+              result = await tool.run(call.arguments, signal);
+              if (answer === "always" && rulesPath && isValidSeed(subject)) {
+                rules = await appendRule(rulesPath, { tool: tool.name, prefix: subject });
+              }
+            }
+          }
+        }
+      }
       yield {
         type: "tool_execution_end",
         toolCallId: call.id,

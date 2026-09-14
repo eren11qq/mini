@@ -51,6 +51,9 @@ export interface LoopContext {
 }
 export interface RunLoopOptions {
   confirm?: (prompt: string) => "yes" | "always" | "no";
+  // T2 AC-T2-7/8:rules.json 路径(D4:测试注入临时目录,生产 = <cwd>/rules.json)。
+  // 缺省 = 不读写 rules(always 退化为一次性 yes)。
+  rulesPath?: string;
   maxTurns?: number;
   clock?: () => number;
   // AC-L3-4:外部 abort。loop 在 for-await 顶 + 工具批前查 .aborted;
@@ -106,6 +109,16 @@ export type StreamFn = (context: LoopContext, signal?: AbortSignal) => AsyncIter
 // confirm gate 留 T2(beforeToolCall hook),L2 工具直接执行。
 export interface Tool {
   name: string;
+  // T2 AC-T2-4:旁挂 JSON Schema,loop 在 run 前 ajv 校验(照 pi prepare→validate);
+  // 失败 → error toolResult 回喂,不执行 run、不断循环。缺省 = 不校验。
+  schema?: object;
+  // T2 AC-T2-5/6:声明豁免 beforeToolCall 确认门(= 只读类,read 置 true)。
+  // 缺省 false → 新工具自动过安检(story 24,确认逻辑在 loop 不在工具)。
+  skipConfirm?: boolean;
+  // T2 AC-T2-7:"always" 落盘的规则种子抽取器(工具声明域知识,确认逻辑仍在 loop)。
+  // bash 的 `git push` → `git:*`。loop 对同工具的新调用再抽一次,字符串相等 = 免弹。
+  // 缺省 = 用 JSON.stringify(args) 整参精确匹配。
+  prefixOf?: (args: unknown) => string;
   // Story 16 / T4:loop 把 options.signal 透传给 run,工具(尤其 bash)据此中断/杀进程树。
   // 可选参 → 不观测 signal 的既有工具零改动。
   run(args: unknown, signal?: AbortSignal): Promise<ToolResult>;
