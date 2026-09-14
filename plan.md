@@ -597,6 +597,10 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:同一 jsonl 内 `append` 传 `parentId` 造多分支 → `rebuild(leafId)` = 该 leaf 沿 parentId 回溯到根的路径投影(兄弟分支一行不见;`model` 取路径上末条 model_change,不取文件末行),`rebuild()` 不传参 = 最新 leaf;append 两条后丢弃实例(模拟 kill)→ `SessionManager.open({baseDir,cwd})` 接回同一文件,已 flush entry 全在、不新建文件、续写行 parentId 指回 kill 前 leaf;末行为半截 JSON 时 open 截回最后一个换行(已提交行一条不丢),非末行坏 JSON 则 rebuild 抛错;rebuild 结果直喂 `runLoop(假流)` 跑完一轮无错;全程文件行数只增不减、旧行逐字不变。五剧本任一不满足即判失败。
+- **判卷**:通过(2026-09-14)— seams 与用户确认:分支 = `append` 可选 `parentId`(不另开 fork);重开 = 静态 `open({sessionId?})`(缺省最新 = `--continue`,给定 = `--resume`);torn 末行 = open 时截到末换行(半行从未提交成 entry,不算"删旧行"),中间坏行抛错报真损坏;未知 leafId 抛错(静默返空会被 H1 当空会话续写)
+- **验证**:AC-M2-2/3/4/5 红→绿。真红 5 处:线性投影读到兄弟分支、`open is not a function`、torn 末行 `Unterminated string in JSON at position 41`、`sessionId` 被忽略、未知 leaf 静默返空;即时绿 3 处 = 回归护栏(model 走路径末条、中间坏行抛、M2-3 喂 loop 类型直通过)。附带修一个自造 flake:文件名时间戳只到秒,同秒两会话"最新"随 uuid 字典序翻转 → open 改以 mtime 定最新(名字兜底)。typecheck 0;eslint src/memory 0 问题;prettier 干净;全量 77 passed + 1 skipped(smoke),6 连跑稳定
+- **遗留**:`rebuild()` 默认 leaf = 文件末行 entry(最新写入者);多分支下"活跃 leaf"由实例内 leafId 与磁盘末行共同决定,切 leaf/`getTree()` 交互仍在 DEFERRED(v2 UI)
 
 ### AC-M2-2: leaf 回溯重建
 
