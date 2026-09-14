@@ -1,9 +1,8 @@
-// H1+H2+H3 harness:组装 + 裸 readline + 流式 stdout。AC-H1-3 = 本文件零业务逻辑:
+// H1+H2+H3+P2 harness:组装 + ChatIO 聊天框(TTY=TUI 变体 A,非 TTY=旧 readline 回落,tui.ts)。AC-H1-3 = 本文件零业务逻辑:
 // 停止判定、schema 校验、确认门规则、压缩全在 loop/stream/tools/memory 层;H2 的厂商
 // 选择/热切/会话挑选的裁决也全在纯缝里(parseArgs / resolveProvider / resolveModel /
 // SessionManager.list —— 均可测)。这里只做「读 flag → 选会话 → 拼参数 → 转事件 → 落盘」
 // 的搬运,唯一加工是 provider 工具形态映射(纯)。
-import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -28,7 +27,7 @@ import { findProjectContext } from "./project-context.ts";
 import { resolveProvider } from "./providers.ts";
 import { resolveModel } from "./resolve-model.ts";
 import { buildSystemPrompt } from "./system-prompt.ts";
-import { createRenderer } from "./renderer.ts";
+import { createPlainIO, createTui, type ChatIO } from "./tui.ts";
 
 // 出厂厂商(无 --model、无历史 model_change 时)。--model <alias> 与 model_change payload
 // 存的都是这个表的 key(alias);dialect 由 createStream 内部派发(S3,上层零改动切方言)。
@@ -51,33 +50,30 @@ function localDate(): string {
 }
 
 // 密钥只从 env 读(PRD 约束)。缺 → 友好报错返回 false(启动缺 = 退出;热切缺 = 不切)。
-function ensureKey(provider: ProviderConfig): boolean {
+function ensureKey(io: ChatIO, provider: ProviderConfig): boolean {
   if (process.env[provider.key_env]) return true;
-  process.stderr.write(`${provider.key_env} 未设置(密钥只从 env 读)。\n`);
+  io.warn(`${provider.key_env} 未设置(密钥只从 env 读)。`);
   return false;
 }
 
 // --resume 编号选择器(S-c list → 打表 → 读号 → 命中项)。选号非法 = 明确拒绝,不静默新开。
-async function pickSession(
-  ask: (q: string) => Promise<string>,
-  baseDir: string,
-  cwd: string,
-): Promise<SessionManager> {
+async function pickSession(io: ChatIO, baseDir: string, cwd: string): Promise<SessionManager> {
   const sessions = SessionManager.list({ baseDir, cwd });
   if (sessions.length === 0) {
-    process.stdout.write("无可恢复会话,新开一个。\n");
+    io.note("无可恢复会话,新开一个。");
     return new SessionManager({ baseDir, cwd });
   }
-  process.stdout.write("恢复哪个会话?\n");
+  io.note("恢复哪个会话?");
   sessions.forEach((s, i) =>
-    process.stdout.write(
-      `  ${i + 1}) ${new Date(s.mtimeMs).toISOString().slice(0, 19)} · ${s.model ?? DEFAULT_ALIAS} · ${s.sessionId.slice(0, 8)}\n`,
+    io.note(
+      `  ${i + 1}) ${new Date(s.mtimeMs).toISOString().slice(0, 19)} · ${s.model ?? DEFAULT_ALIAS} · ${s.sessionId.slice(0, 8)}`,
     ),
   );
-  const n = Number((await ask("编号: ")).trim());
+  const n = Number((await io.ask("编号: ")).trim());
   const pick = sessions[n - 1];
   if (!pick) {
-    process.stderr.write(`无效编号:${n}(1..${sessions.length})。\n`);
+    io.warn(`无效编号:${n}(1..${sessions.length})。`);
+    io.stop();
     process.exit(1);
   }
   return SessionManager.open({ baseDir, cwd, sessionId: pick.sessionId });
@@ -95,23 +91,25 @@ async function main(): Promise<void> {
   const baseDir = join(homedir(), ".mini", "sessions");
   const cwd = process.cwd();
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  rl.on("close", () => process.exit(0)); // Ctrl+D
+  // P2 聊天框缝:TTY = 全屏 TUI(变体 A);非 TTY/管道 = 旧 H1 readline 通道,行为零变。
+  const io: ChatIO =
+    process.stdout.isTTY && process.stdin.isTTY ? createTui({ cwd }) : createPlainIO();
+  io.start();
 
   // Story 16:Ctrl+C = 中断在跑的那一轮(stream + 工具),空转时 = 退出。
   // 中断语义全在 loop(AC-L3-4/6),这里只按开关。
   let controller: AbortController | null = null;
-  rl.on("SIGINT", () => {
+  io.onInterrupt(() => {
     if (controller) controller.abort();
-    else process.exit(0);
-    process.stdout.write("\n"); // tty 不回显 ^C,补换行让后续输出不粘连
+    else {
+      io.stop();
+      process.exit(0);
+    }
   });
-  const ask = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve));
-  const render = createRenderer((s) => process.stdout.write(s));
 
   // ---- 选会话(AC-H2-4/5):--resume 编号选择器 > --continue 最近 > 新会话 ----
   let session: SessionManager;
-  if (args.resume) session = await pickSession(ask, baseDir, cwd);
+  if (args.resume) session = await pickSession(io, baseDir, cwd);
   else if (args.continue)
     session = SessionManager.open({ baseDir, cwd }); // 无 sessionId = 最新
   else session = new SessionManager({ baseDir, cwd });
@@ -128,16 +126,23 @@ async function main(): Promise<void> {
     }); // S-d
     provider = resolveProvider(alias); // S-a;坏 alias 抛
   } catch (e) {
-    process.stderr.write(`${(e as Error).message}\n`);
+    io.warn(`${(e as Error).message}`);
+    io.stop();
     process.exit(1);
     return;
   }
-  if (!ensureKey(provider)) process.exit(1);
+  if (!ensureKey(io, provider)) {
+    io.stop();
+    process.exit(1);
+  }
   // 启动即定厂商:仅当 --model 覆盖了续会话的历史 model 才落 model_change(默认/纯恢复 = 噪音,不写)。
   if (args.model && args.model !== rebuilt.model) {
     session.append({ type: "model_change", payload: { model: alias } });
   }
   let streamFn = createStream(provider);
+  // TUI 顶栏第二行 = 真模型 id;历史条目 = 所选会话 rebuild(plain 模式两者皆 no-op)。
+  io.setModel(provider.models[0]!.id);
+  io.loadHistory(rebuilt.messages);
 
   // H3 S-c 生产 summarizeFn:buildSummarizePrompt(七段规格) + serializeConversation(对话正文)
   // 喂当前 streamFn = 同厂商同模型(/model 热切后变量已换,闭包取最新)。裁决零在 harness。
@@ -168,26 +173,26 @@ async function main(): Promise<void> {
         force: manual,
       });
       if (!entry) {
-        if (manual) process.stdout.write("当前会话无可压缩内容(新会话先聊一轮)。\n");
+        if (manual) io.note("当前会话无可压缩内容(新会话先聊一轮)。");
         return;
       }
       context.messages = session.rebuild().messages;
-      process.stdout.write(
-        `已${manual ? "手动" : "自动"}压缩 → 上下文 ${context.messages.length} 条(纪要已落盘)。\n`,
+      io.note(
+        `已${manual ? "手动" : "自动"}压缩 → 上下文 ${context.messages.length} 条(纪要已落盘)。`,
       );
     } catch (e) {
-      process.stdout.write(`[error] compact: ${(e as Error).message}\n`);
+      io.warn(`[error] compact: ${(e as Error).message}`);
     }
   };
 
-  process.stdout.write(
-    `mini · ${alias} (${provider.models[0]!.id}) · ${cwd}\n` +
-      `  历史 ${context.messages.length} 条 · /model <alias> 热切 · /compact 手动压缩 · Ctrl+C 中断当前轮 / 空转时退出\n` +
-      (projectContext ? `  项目上下文:${projectContext.path}\n` : ""),
+  if (io.mode === "plain") io.note(`mini · ${alias} (${provider.models[0]!.id}) · ${cwd}`);
+  io.note(
+    `历史 ${context.messages.length} 条 · /model <alias> 热切 · /compact 手动压缩 · Ctrl+C 中断当前轮 / 空转时退出`,
   );
+  if (projectContext) io.note(`项目上下文:${projectContext.path}`);
 
   for (;;) {
-    const line = (await ask("> ")).trim();
+    const line = (await io.ask()).trim();
     if (line === "") continue;
 
     // 会话内热切(AC-H2-3):/model <alias> → 校验+换 provider+落 model_change entry。
@@ -195,19 +200,20 @@ async function main(): Promise<void> {
     if (line === "/model" || line.startsWith("/model ")) {
       const next = line.slice("/model".length).trim();
       if (next === "") {
-        process.stdout.write("用法:/model <alias>\n");
+        io.note("用法:/model <alias>");
         continue;
       }
       try {
         const np = resolveProvider(next); // S-a:未知 alias 抛(消息含可选厂商)
-        if (!ensureKey(np)) continue; // 缺密钥不切,保留原厂商
+        if (!ensureKey(io, np)) continue; // 缺密钥不切,保留原厂商
         alias = next;
         provider = np;
         streamFn = createStream(provider);
         session.append({ type: "model_change", payload: { model: alias } });
-        process.stdout.write(`已切换 → ${alias} (${provider.models[0]!.id})\n`);
+        io.setModel(provider.models[0]!.id); // 顶栏第二行跟着热切走。
+        io.note(`已切换 → ${alias} (${provider.models[0]!.id})`);
       } catch (e) {
-        process.stdout.write(`${(e as Error).message}\n`);
+        io.warn(`${(e as Error).message}`);
       }
       continue;
     }
@@ -239,14 +245,9 @@ async function main(): Promise<void> {
       for await (const event of runLoop(streamFn, TOOLS, context, {
         signal: controller.signal, // SIGINT → loop 停该轮(工具侧 bash 杀进程组)
         rulesPath: join(cwd, "rules.json"), // T2/D4:生产规则落 <cwd>/rules.json
-        confirm: async (prompt) => {
-          const answer = (await ask(`${prompt} `)).trim().toLowerCase();
-          if (answer === "1" || answer === "y" || answer === "yes") return "yes";
-          if (answer === "2" || answer.startsWith("always")) return "always";
-          return "no";
-        },
+        confirm: (prompt) => io.confirm(prompt), // 答案映射在 tui.ts(与旧逐字等价)
       })) {
-        render(event);
+        io.render(event);
         if (event.type === "message_end") {
           session.append({ type: "message", payload: event.message }); // M1 即时落盘
         }

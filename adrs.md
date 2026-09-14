@@ -46,3 +46,38 @@
 
 - `src/harness/system-prompt.test.ts`：首句 indexOf===0、段序 骨架→(env)→工具→项目上下文、env 可选整块省略、AC-H3-5 纯函数重建——全部保持。
 - 融合文本先经人工逐段对比批准后才落盘（先译后比再改，三轮确认）。
+
+## ADR-002：终端聊天框 = 变体 A 布局 + G5 线描幽灵顶栏（生产化）
+
+- 日期：2026-09-15
+- 状态：已采纳
+- 涉及文件：`src/harness/tui-view.ts`（纯渲染）、`src/harness/tui.ts`（ChatIO 双实现）、`src/harness/cli.ts`（换缝）；原型原件存一次性分支 `proto/terminal-ui`（61ad622，不入 main 线）
+
+### 背景
+
+H1~H3 交付的是裸 readline + 增量 stdout，操控体验差（无整体画面、误触即发）。经 /prototype 流程做三布局变体（A 全宽双框 / B 左流右面板 / C 无框内联）+ 15 节 logo lab，用户十余轮反馈收敛出定稿。原型答完问题即弃，本条记录采纳进生产的最终形态与映射。
+
+### 裁决（用户逐轮确认，非我自选）
+
+1. **布局 = 变体 A**：G5 幽灵 4 行顶栏左置 + info 三行右邻（`mini v0.1 · coding agent` / `<model-id> with high effort` / `process.cwd()` 全路径）→ 无边框消息流 → 全屏唯一边框 = `>` 行首输入框。参考系 = opencode：名字居顶、下方单输入框。
+2. **标志 = G5 第一版线描幽灵**（`╭───╮/│○ ○│/│ ‿ │/╰╯╰╯`，青色单色，带 ‿ 嘴、4 行等比）。中间轮次的"去嘴放大 1.5×"与"内部填色"两版被用户以"看起来很奇怪/加颜色很奇怪"撤回。
+3. **消息流符号**：`›` 用户 / `▍` 助手 / 淡显 thinking / `▸` 工具（start 挂行、end 回填 `→ 结果 ✓/✗`，同 toolCallId 不重复开行）/ `⚠` 确认门与错误 / dim 系统注记。
+4. **busy 态**：输入行右挂 `⋯ 运行中 Ctrl+C 中断`；busy 期 Enter = 排队下一条（本轮结束即领走）。
+
+### 实现映射
+
+- 纯渲染 `tui-view.ts`（宽度/折行/框线/历史映射全可测）+ 驱动 `tui.ts`（raw mode 键盘 + setImmediate 合并重绘）。
+- `cli.ts` 只换缝：`ChatIO`（ask/confirm/render/note/warn/setModel/loadHistory/onInterrupt），TTY = TUI，**非 TTY 自动回落旧 readline 通道**（管道/脚本零破坏）；loop/stream/memory 与 AC-H1-3（组装层零业务逻辑）不动。
+- 防漂移：制表/生僻符号以码点扫描验证落盘；测试断言同源（LOGO 码点钉死，漂移必红）。
+
+### 明确拒绝项
+
+- Tab 布局循环、变体 B 侧栏（ctx%/tools 面板）、变体 C：原型机制，生产只留 A。
+- `ctx 12%/200k`、"历史 34 条"独立展示：proto 期用户"暂时不要"，压缩信息走 dim 注记行。
+- 块字词标（mini 大字）、拟人篇 M1-M5、像素幽灵：被"幽灵可以但不要像素画风"与 G5 胜出淘汰。
+- 输入框内嵌发送按钮/多行编辑器：定稿就是"前面一个 > 的聊天框"。
+
+### 验证锚点
+
+- `tui-view.test.ts` 10 例：vw CJK 计列 / wrap 硬切 / fitInput 保尾 / LOGO 码点 / 行数=height 封顶 / 超屏留尾 / busy 提示 / 条目映射 / liveEntry。全绿（125 passed）。
+- 真 TTY 人工验收（渲染对位、键感、确认门、Ctrl+C 双语义）= 待用户 `npm run cli` 实测。
