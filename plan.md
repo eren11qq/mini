@@ -500,6 +500,9 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:直接调 `bashTool.run({command:"sleep 99999", timeout:100})` → ≈100ms 返回 isError:true 且含超时字样,返回后 `pgrep -f "sleep 99999"` 为空(shell 与其子 sleep 皆亡 = 杀进程树,非只 kill 壳);再调 `bashTool.run({command:"seq 1 6000"})` → ToolResult 内联文本 ≤2000 行且 ≤50KB、含末行 `6000` 与截断提示、并含临时文件路径,读该文件 = 全量 6000 行;再把真 bashTool 喂进 runLoop、confirm 恒应答 "no" → 命令 `touch <tmp>/marker` 未执行(marker 不存在),且 loop 回喂 toolResult = T2 既有拒绝语义(isError:true、文本含 "user rejected",run-loop.ts:198)。三剧本任一不满足即判失败。
+- **判卷**:通过(2026-09-14)— seams 与用户确认;AC-T4-2/3/4 各自红→绿,AC-T4-5 真 bashTool 回归绿(T2 门既有,新行为 = 不置 skipConfirm 自动过检);typecheck 干净;全量 64 passed + 1 skipped(smoke)
+- **seams(已确认 2026-09-14)**:`bashTool: Tool`(src/tools/bash.ts,同 read/write 走 Tool 公共接口 types.ts:110);`run({command, timeout?}, signal?)` — 工具内部 AbortController 管 timeout,与 loop 透传的 signal 合并,任一触发 → 杀进程树;杀法 = POSIX 进程组(spawn detached + `process.kill(-pid)`,项目 WSL-only 成立);全量 stdout+stderr 合流落 `os.tmpdir()` 临时文件,路径写进 ToolResult 文本;保尾截断复用 read.ts 同一 `tailTruncate`(导出共享,阈值单源);`prefixOf` = 命令首 token `:*`(与 registry.test 假 bash 同规则);不置 skipConfirm → 自动过 loop 确认门。
 
 ### AC-T4-2: 超时杀进程树
 

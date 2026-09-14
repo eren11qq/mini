@@ -12,15 +12,16 @@ function truncatedNotice(kept: number, total: number): string {
   return `[truncated: showing last ${kept} of ${total} lines]`;
 }
 
-function tailTruncate(numbered: string[]): string {
-  const total = numbered.length;
-  const whole = numbered.join("\n");
+// T1 保尾 + T4 bash 共用(阈值单源,DECISIONS T5)。
+export function tailTruncate(lines: string[]): string {
+  const total = lines.length;
+  const whole = lines.join("\n");
   if (total <= MAX_LINES && Buffer.byteLength(whole, "utf8") <= MAX_BYTES) return whole;
   // 单行(start=length)→ 只剩提示行,恒 fit → 二分必有解;单调:更小 start = 更大体。
   const fits = (start: number): boolean => {
     const kept = total - start;
     if (kept + 1 > MAX_LINES) return false;
-    const text = truncatedNotice(kept, total) + "\n" + numbered.slice(start).join("\n");
+    const text = truncatedNotice(kept, total) + "\n" + lines.slice(start).join("\n");
     return Buffer.byteLength(text, "utf8") <= MAX_BYTES;
   };
   let lo = 0;
@@ -30,7 +31,7 @@ function tailTruncate(numbered: string[]): string {
     if (fits(mid)) hi = mid;
     else lo = mid + 1;
   }
-  return truncatedNotice(total - lo, total) + "\n" + numbered.slice(lo).join("\n");
+  return truncatedNotice(total - lo, total) + "\n" + lines.slice(lo).join("\n");
 }
 
 export const readTool: Tool = {
