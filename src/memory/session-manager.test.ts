@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "./session-manager.js";
+import { SUMMARY_SECTIONS, buildSummarizePrompt } from "./summarize-prompt.js";
 import { runLoop } from "../loop/run-loop.js";
 import type {
   AgentEvent,
@@ -443,5 +444,159 @@ describe("M3 compact:刀口不劈配对", () => {
     expect(got).toEqual([user("u0"), asstCall("t1"), tr("t1"), user("u3")]);
     // 热替换窗口:摘要 + 完整配对
     expect(sm.rebuild().messages).toEqual([user("摘要P"), callU("t2"), tr("t2")]);
+  });
+});
+
+// ================= M4 纪要七段 + 增量合并 + 拒压 =================
+
+const SECTIONS = [
+  "目的",
+  "做到哪了",
+  "关键要点",
+  "引用文件",
+  "关键决定",
+  "下一步",
+  "关键背景",
+] as const;
+const SEVEN = SECTIONS.map((s) => `## ${s}\n(内容略)`).join("\n");
+
+describe("M4 纪要七段 + prompt 单源", () => {
+  it("AC-M4-2 假 summarizeFn 的七段中文原样进 payload 与 rebuild 摘要行;SUMMARY_SECTIONS = 七段单源;buildSummarizePrompt 含七段标题,带旧纪要再含 UPDATE 合并指令", async () => {
+    const cwd = join(dir, "seven");
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    sm.append({ type: "message", payload: user("u1") });
+    sm.append({ type: "message", payload: asstU("a1", 40000, 0) });
+
+    // 每条 100:a1 收下(=100≤150),u1 使累计 200 超预算 → 刀口 = a1,保留段 1 条(避开 M3 全弃路径)。
+    await sm.compact({
+      contextWindow: 50000,
+      keepRecent: 150,
+      tokenOf: () => 100,
+      summarizeFn: () => SEVEN,
+    });
+
+    // 纪要七段原样流转:盘上 payload.summary + rebuild 投影摘要行都含全部七段标题。
+    const file = await soleSessionFile("seven");
+    const comp = parse((await readFile(file, "utf8")).trimEnd().split("\n").at(-1)!);
+    const summary = (comp.payload as { summary: string }).summary;
+    for (const s of SECTIONS) expect(summary).toContain(`## ${s}`);
+    const rebuilt = sm.rebuild().messages;
+    expect(rebuilt).toHaveLength(2); // 摘要行 + 保留段(a1 单条 ≤ keepRecent)
+    for (const s of SECTIONS) expect((rebuilt[0] as UserMessage).content).toContain(`## ${s}`);
+
+    // 七段标题源码单源。
+    expect(SUMMARY_SECTIONS).toEqual(SECTIONS);
+
+    // prompt builder:无旧纪要 = 从零生成指令,含七段标题;有旧纪要 = UPDATE 合并指令。
+    const fresh = buildSummarizePrompt();
+    for (const s of SECTIONS) expect(fresh).toContain(s);
+    const merged = buildSummarizePrompt("旧纪要文本");
+    for (const s of SECTIONS) expect(merged).toContain(s);
+    expect(merged).toContain("旧纪要文本");
+    expect(merged).toContain("合并");
+  });
+});
+
+describe("M4 二次压缩:增量合并(纪要恒一份)", () => {
+  it("AC-M4-3 第二次 compact 的 summarizeFn 收 previousSummary = 首轮纪要、toSummarize = 仅首轮刀口后新入弃段(首轮弃段不重发);rebuild 摘要行恒一;盘上 2 条 compaction entry、旧行逐字不变", async () => {
+    const cwd = join(dir, "merge2");
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    const ids: string[] = [];
+    for (let i = 0; i < 10; i++)
+      ids.push(sm.append({ type: "message", payload: user(`m${i}`) }).id);
+    ids.push(sm.append({ type: "message", payload: asstU("m10", 40000, 0) }).id); // 40000 > 50000−16384 → 触发
+
+    const calls: { old: AgentMessage[]; prev: string | undefined }[] = [];
+    const opts = {
+      contextWindow: 50000,
+      keepRecent: 250,
+      tokenOf: () => 100,
+      summarizeFn: (old: AgentMessage[], previousSummary?: string) => {
+        calls.push({ old, prev: previousSummary });
+        return previousSummary === undefined ? "第一轮回要" : "合并纪要";
+      },
+    };
+
+    // 首轮:近往远 m10(100)+m9(200),m8 使 300>250 → 刀口 = m9,弃 m0..m8。
+    await sm.compact(opts);
+    expect(calls[0]!.prev).toBeUndefined();
+    expect(calls[0]!.old).toEqual(Array.from({ length: 9 }, (_, i) => user(`m${i}`)));
+    const file = await soleSessionFile("merge2");
+    const snap = (await readFile(file, "utf8")).trimEnd().split("\n");
+    const keptOf = (line: string) =>
+      (parse(line).payload as { firstKeptEntryId: string | null }).firstKeptEntryId;
+    expect(keptOf(snap.at(-1)!)).toBe(ids[9]);
+
+    // 压缩后继续对话:a12 usage = 压缩后窗口的 provider 精确数(触发口径)。
+    ids.push(sm.append({ type: "message", payload: user("m11") }).id);
+    ids.push(sm.append({ type: "message", payload: asstU("a12", 40000, 0) }).id);
+
+    // 二轮(可弃窗 = 首轮保留段 m9 起):a12(100)+m11(200),m10 使 300>250 → 刀口 = m11。
+    await sm.compact(opts);
+    // 红①:现实现单参调用 → prev 恒 undefined。
+    expect(calls[1]!.prev).toBe("第一轮回要");
+    // 红②:现实现会把首轮已弃 m0..m8 重发一遍。
+    expect(calls[1]!.old).toEqual([user("m9"), asstU("m10", 40000, 0)]);
+    expect(keptOf((await readFile(file, "utf8")).trimEnd().split("\n").at(-1)!)).toBe(ids[11]);
+
+    sm.append({ type: "message", payload: user("新行") });
+    // 投影纪要恒一 = 第二次 UPDATE 产物,首轮纪要被折叠覆盖、不堆叠。
+    expect(sm.rebuild().messages).toEqual([
+      user("合并纪要"),
+      user("m11"),
+      asstU("a12", 40000, 0),
+      user("新行"),
+    ]);
+
+    const after = (await readFile(file, "utf8")).trimEnd().split("\n");
+    expect(after.filter((l) => parse(l).type === "compaction")).toHaveLength(2); // append-only
+    expect(after.slice(0, snap.length)).toEqual(snap); // 旧行逐字不变
+  });
+});
+
+describe("M4 compact:旧段超窗拒压", () => {
+  it("AC-M4-4 最近单条 tokenOf > keepRecent(压缩数学上救不了)→ 抛错提示手动处理;summarizeFn 零调用、文件一字不动(不全弃静默压 / 不删旧行)", async () => {
+    const cwd = join(dir, "refuse");
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    sm.append({ type: "message", payload: user("u0") });
+    sm.append({ type: "message", payload: asstU("a1", 40000, 0) }); // usage 过触发阈值
+    const file = await soleSessionFile("refuse");
+    const before = (await readFile(file, "utf8")).trimEnd().split("\n");
+
+    await expect(
+      sm.compact({
+        contextWindow: 50000,
+        keepRecent: 50,
+        tokenOf: () => 100, // 最近单条 100 > 50 → 无有效刀口
+        summarizeFn: () => {
+          throw new Error("拒压路径不得调用 summarizeFn");
+        },
+      }),
+    ).rejects.toThrowError(/手动处理/);
+
+    const after = (await readFile(file, "utf8")).trimEnd().split("\n");
+    expect(after).toEqual(before); // 行数不减 + 旧行逐字不变
+  });
+});
+
+describe("M4 compact:注入 summarizeFn 零网络", () => {
+  it("AC-M4-5 触发压缩全程(阈值判定 + 切点 + 注入摘要)globalThis.fetch 零调用", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    try {
+      const cwd = join(dir, "nonet");
+      const sm = new SessionManager({ baseDir: dir, cwd });
+      sm.append({ type: "message", payload: user("u1") });
+      sm.append({ type: "message", payload: asstU("a1", 40000, 0) });
+
+      await sm.compact({ contextWindow: 50000, summarizeFn: () => "摘要N" });
+
+      expect(spy).not.toHaveBeenCalled();
+      // 摘要确已进 payload(证明确实走了压缩而非静默 no-op)。
+      const file = await soleSessionFile("nonet");
+      const comp = parse((await readFile(file, "utf8")).trimEnd().split("\n").at(-1)!);
+      expect((comp.payload as { summary: string }).summary).toBe("摘要N");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

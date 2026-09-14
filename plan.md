@@ -684,8 +684,16 @@
 
 ### AC-M4-1: W1 验收句
 
-- Verification:人工
+- Scenario:切片开工前
+- Action:自写"怎么演示算完"验收句
+- Expected:助教判卷通过(有不合格依据)
+- Verification:人工 — 验收句文本入 plan.md 并标注判卷通过
 - Priority:Required
+- **验收句**:同一会话调 `compact({contextWindow,summarizeFn,keepRecent,tokenOf})` 四剧本:①注入假 summarizeFn 返回固定七段中文(目的/做到哪了/关键要点/引用文件/关键决定/下一步/关键背景)→ compaction entry payload.summary 含全部七段标题、rebuild 投影摘要行含全部七段,且源码 `SUMMARY_SECTIONS` 常量 = 七段标题单源、`buildSummarizePrompt()` 产物含七段标题、`buildSummarizePrompt(旧纪要)` 产物另含"旧纪要"文本与"合并"UPDATE 指令;②首次 compact 后再 compact → summarizeFn 第二次调用收 `previousSummary` = 首轮纪要文本、`toSummarize` 不含首轮被弃消息(= 首轮刀口后新入弃段);rebuild 摘要行恒 1(末次产物)、盘上 compaction entry = 2 条、旧行逐字不变;③最近单条 `tokenOf` > keepRecent → compact 抛 Error(含"手动处理"字样)、summarizeFn 零调用、文件行数不变;④全程 `globalThis.fetch` spy 零调用。四剧本任一不满足即判失败;源零真实密钥(grep `sk-` 零命中)。
+- **seams(已确认 2026-09-14)**:新文件 `src/memory/summarize-prompt.ts` 导出 `SUMMARY_SECTIONS`(七段单源)+ `buildSummarizePrompt(previousSummary?)`(生产 LLM 指令文本,上层拿去配流生成;compact 自身零网络);`summarizeFn` 扩参 `(toSummarize, previousSummary?)`(TS 少参函数可赋值,M3 既有注入向后兼容)——compact 取路径末条 compaction entry 的 summary 为 previousSummary,`toSummarize` = 末条 compaction 之后、刀口之前的 message(旧弃段不重发),合并由 LLM UPDATE 式完成、compact 不拼字符串;触发 usage 计数改 = 末条 compaction 后窗口(投影口径,M3 测试无 compaction 行不受影响);拒压 = 无有效刀口(最近单条 > keepRecent,M3 注释预留 `cut===path.length` 路径)→ throw,分段兜底进 DEFERRED;rebuild 多 compaction 折叠投影天然纪要恒一,零改动。
+- **判卷**:通过(2026-09-14)— 四剧本验收句 + seams 与用户确认
+- **验证**:AC-M4-2/3/4/5 红→绿。真红 4 处:`Failed to load url ./summarize-prompt.js`、`calls[1].prev` 恒 undefined(单参调用)、二轮 `toSummarize` 重发首轮弃段(无 floor 概念)、拒压报错文案缺"手动处理"。即时绿 1 处 = 回归护栏(AC-M4-5 fetch spy,零网络是注入设计属性)。自造测试 bug 2 处修正:AC-M4-2 初版用默认 tokenOf(chars/4)过小落入 M3 全弃路径(断言 2 得 1)、AC-M4-3 初版切点累计算错一位。附带 seams 内行为修正:触发口径 = 全路径 usage 累计 → floor 窗内末条 assistant usage(provider 精确数;否则旧大 usage 常驻致压缩永不收敛;M3 测试均单 assistant 兼容)。typecheck 0;eslint src/memory 0 问题;prettier 干净;全量 84 passed + 1 skipped(smoke);grep `sk-` 仅 S1 测试注释引用规则本身,零真实密钥
+- **遗留**:①巨大单条(> keepRecent)的分段兜底 = DEFERRED(M3 已录);②firstKeptEntryId 指向非 message 行时 rebuild indexOf=-1 全折的 M3 潜在边缘未动(M4 范围外);③生产 summarizeFn(拿 buildSummarizePrompt 配同模型流)= H3 接线
 
 ### AC-M4-2: 纪要七段中文
 

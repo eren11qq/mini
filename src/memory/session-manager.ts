@@ -198,28 +198,47 @@ export class SessionManager {
     return path;
   }
 
-  // M3 compaction:触发 = 累计 usage > contextWindow − reserve;产物 = compaction entry(append,旧行不删);
+  // M3 compaction:触发 = 窗口 usage > contextWindow − reserve;产物 = compaction entry(append,旧行不删);
   // 切点 = 从近往远累计 tokenOf 至 keepRecent 处,刀口不劈 toolCall/toolResult 配对。
+  // M4 增量合并:末条 compaction 定 floor(可弃窗下界 = 其保留段起点)与 previousSummary;
+  // 触发口径 = 投影后窗口末条 assistant usage(弃段/旧纪要不再重复计入,否则压缩永不收敛)。
   async compact(opts: CompactOptions): Promise<SessionEntry | null> {
     if (this.file === null) return null;
     const path = this.leafPath();
-    const messages = path.filter((e) => e.type === "message").map((e) => e.payload as AgentMessage);
-    const total = messages.reduce(
-      (n, m) =>
-        m.role === "assistant" && m.usage
-          ? n + m.usage.prompt_tokens + m.usage.completion_tokens
-          : n,
-      0,
-    );
+
+    let floor = 0;
+    let previousSummary: string | undefined;
+    for (let i = path.length - 1; i >= 0; i--) {
+      const e = path[i]!;
+      if (e.type !== "compaction") continue;
+      const p = e.payload as CompactionPayload;
+      previousSummary = p.summary;
+      // 保留段起点 = 可弃窗下界;保留段为空(null)或切点行不在本路径(换分支)→ 下界退为该 entry 之后。
+      const k =
+        p.firstKeptEntryId === null ? -1 : path.findIndex((x) => x.id === p.firstKeptEntryId);
+      floor = k >= 0 ? k : i + 1;
+      break;
+    }
+
+    let total = 0;
+    for (let i = path.length - 1; i >= floor; i--) {
+      const e = path[i]!;
+      if (e.type !== "message") continue;
+      const m = e.payload as AgentMessage;
+      if (m.role === "assistant" && m.usage) {
+        total = m.usage.prompt_tokens + m.usage.completion_tokens;
+        break;
+      }
+    }
     const reserve = opts.reserve ?? DEFAULT_RESERVE;
     if (total <= opts.contextWindow - reserve) return null;
 
-    // 切点:从近往远按 tokenOf 累计,首个放不进 keepRecent 预算的 message 即刀口。
+    // 切点:从近往远按 tokenOf 累计,首个放不进 keepRecent 预算的 message 即刀口(下界 = floor)。
     const tokenOf = opts.tokenOf ?? defaultTokenOf;
     const keepRecent = opts.keepRecent ?? DEFAULT_KEEP_RECENT;
     let acc = 0;
-    let cut = path.length; // = 无保留段(近段单条已超 keepRecent → M4 拒压路径;M3 先按全弃摘要)
-    for (let i = path.length - 1; i >= 0; i--) {
+    let cut = path.length; // 保持 = 最近单条放不下 → 无有效刀口,见下拒压
+    for (let i = path.length - 1; i >= floor; i--) {
       const e = path[i]!;
       if (e.type !== "message") continue;
       const t = tokenOf(e.payload as AgentMessage);
@@ -227,20 +246,28 @@ export class SessionManager {
       acc += t;
       cut = i;
     }
+    // M4 拒压:保留段至少含最近一条,而它已超 keepRecent → 压缩数学上救不了 →
+    // 报错提示手动处理,绝不全弃静默压(分段兜底见 DEFERRED)。
+    if (cut === path.length) {
+      throw new Error(
+        `compaction refused: newest message exceeds keepRecent=${keepRecent} tokens,需手动处理(分段兜底见 DEFERRED)`,
+      );
+    }
     // 刀口不劈 toolCall/toolResult 配对:保留段首条是 toolResult(其 toolCall 在被弃段)→ 回退到该 assistant。
-    while (cut > 0 && cut < path.length) {
+    while (cut > floor && cut < path.length) {
       const e = path[cut]!;
       if (e.type !== "message" || (e.payload as AgentMessage).role !== "toolResult") break;
       cut--;
     }
-    // cut===0 = 全部塞得进 keepRecent 却仍触发阈值(usage 与体量解耦)→ 保留段为空,null 折叠全部。
-    const firstKeptEntryId = cut === 0 ? null : (path[cut]?.id ?? null);
+    // cut===floor = 可弃窗内全部塞得进 keepRecent 却仍触发阈值(usage 与体量解耦)→ 保留段为空,null 折叠全部。
+    const keptEmpty = cut === floor;
+    const firstKeptEntryId = keptEmpty ? null : path[cut]!.id;
     const old = path
-      .slice(0, cut === 0 ? path.length : cut)
+      .slice(floor, keptEmpty ? path.length : cut)
       .filter((e) => e.type === "message")
       .map((e) => e.payload as AgentMessage);
 
-    const summary = await opts.summarizeFn(old);
+    const summary = await opts.summarizeFn(old, previousSummary);
     return this.append({
       type: "compaction",
       payload: { summary, firstKeptEntryId } satisfies CompactionPayload,
@@ -265,8 +292,9 @@ export const DEFAULT_KEEP_RECENT = 20000;
 
 export interface CompactOptions {
   contextWindow: number;
-  // 生产 = 同模型生成七段纪要(M4);测试注入假函数 = 零网络。
-  summarizeFn: (toSummarize: AgentMessage[]) => string | Promise<string>;
+  // 生产 = 同模型按 SUMMARY_SECTIONS 七段生成(M4);测试注入假函数 = 零网络。
+  // previousSummary = 路径末条 compaction 的旧纪要(二次压缩 UPDATE 增量合并;首轮 = undefined)。
+  summarizeFn: (toSummarize: AgentMessage[], previousSummary?: string) => string | Promise<string>;
   reserve?: number;
   keepRecent?: number;
   // 每 message token 估算(切点用);默认 pi 式启发 = chars/4 向上取整。
