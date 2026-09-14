@@ -4,8 +4,8 @@ import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Tool, ToolResult } from "../loop/types.js";
-import { tailTruncate } from "./read.js";
+import type { Tool, ToolResult } from "../loop/types.ts";
+import { tailTruncate } from "./read.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 let fileSeq = 0;
@@ -16,6 +16,18 @@ function fail(text: string): ToolResult {
 
 export const bashTool: Tool = {
   name: "bash",
+  description:
+    "Run a shell command with /bin/sh -c and return its combined stdout/stderr. Optional `timeout` in ms; a timeout or interrupt kills the whole process group. Long output is tail-truncated.",
+  // H1 装配发现:bash 原先无 schema → provider 收不到 parameters,只能猜 command 键名。
+  schema: {
+    type: "object",
+    properties: {
+      command: { type: "string" },
+      timeout: { type: "integer", minimum: 1 },
+    },
+    required: ["command"],
+    additionalProperties: false,
+  },
   // 规则种子 = 命令首 token(与 loop 侧 T2 假 bash 同式);不置 skipConfirm → 过确认门。
   prefixOf: (a) =>
     `${

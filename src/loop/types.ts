@@ -50,7 +50,8 @@ export interface LoopContext {
   tools?: unknown[];
 }
 export interface RunLoopOptions {
-  confirm?: (prompt: string) => "yes" | "always" | "no";
+  // H1:裸 readline 的 question 天然异步 → 允许返回 Promise(loop 侧 await;同步实现照旧兼容)。
+  confirm?: (prompt: string) => "yes" | "always" | "no" | Promise<"yes" | "always" | "no">;
   // T2 AC-T2-7/8:rules.json 路径(D4:测试注入临时目录,生产 = <cwd>/rules.json)。
   // 缺省 = 不读写 rules(always 退化为一次性 yes)。
   rulesPath?: string;
@@ -109,6 +110,10 @@ export type StreamFn = (context: LoopContext, signal?: AbortSignal) => AsyncIter
 // confirm gate 留 T2(beforeToolCall hook),L2 工具直接执行。
 export interface Tool {
   name: string;
+  // H1 装配发现:方言适配器把 context.tools 翻成 provider 的 function 数组时要用
+  // description(openai-completions.ts:309-311),而真工具原先只有 name → 模型看不见说明。
+  // 缺省 = 不发(假工具/测试零改动)。
+  description?: string;
   // T2 AC-T2-4:旁挂 JSON Schema,loop 在 run 前 ajv 校验(照 pi prepare→validate);
   // 失败 → error toolResult 回喂,不执行 run、不断循环。缺省 = 不校验。
   schema?: object;

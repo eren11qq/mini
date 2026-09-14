@@ -3,9 +3,9 @@ import { spawnSync } from "node:child_process";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runLoop } from "../loop/run-loop.js";
-import type { AgentEvent, LoopContext, ProviderEvent, StreamFn } from "../loop/types.js";
-import { bashTool } from "./bash.js";
+import { runLoop } from "../loop/run-loop.ts";
+import type { AgentEvent, LoopContext, ProviderEvent, StreamFn } from "../loop/types.ts";
+import { bashTool } from "./bash.ts";
 
 // T4 seam:bashTool via Tool.run(types.ts:110 公共接口)。进程表 = 唯一真相源。
 // AC-T4-2:超时杀进程树 —— shell 与其派生子进程皆亡,无僵尸。

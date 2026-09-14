@@ -10,8 +10,8 @@ import type {
   StopReason,
   Transport,
   Usage,
-} from "../loop/types.js";
-import { anthropicStream } from "./anthropic-messages.js";
+} from "../loop/types.ts";
+import { anthropicStream } from "./anthropic-messages.ts";
 
 export interface StreamDeps {
   transport?: Transport;

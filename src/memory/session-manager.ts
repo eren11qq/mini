@@ -4,6 +4,7 @@
 // M2 加:append 显式 parentId = 分支;rebuild(leafId) 沿 parentId 回溯;open() 换进程接回(torn 末行截回换行)。
 // compaction 窗口投影 = M3。
 import {
+  existsSync,
   mkdirSync,
   writeFileSync,
   appendFileSync,
@@ -14,7 +15,7 @@ import {
 } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
-import type { AgentMessage } from "../loop/types.js";
+import type { AgentMessage } from "../loop/types.ts";
 
 export interface SessionHeader {
   type: "session";
@@ -86,9 +87,12 @@ export class SessionManager {
   // 无 sessionId = 最新会话(H1 --continue);有则按 <时间>_<sessionId>.jsonl 精确挑(--resume)。
   static open(opts: SessionOpenOptions): SessionManager {
     const sm = new SessionManager(opts);
-    const names = readdirSync(sm.dir)
-      .filter((n) => n.endsWith(".jsonl"))
-      .sort();
+    // 目录不存在 = 这台机器还没跑过 mini(首次运行正路)→ 按"无历史"处理,不 ENOENT 抛穿调用方。
+    const names = existsSync(sm.dir)
+      ? readdirSync(sm.dir)
+          .filter((n) => n.endsWith(".jsonl"))
+          .sort()
+      : [];
     // 时间戳前缀只到秒 → 同秒两个会话(新建/测试快跑)字典序由 uuid 随机位决定,不可靠;
     // "最新"以 mtime 为准(续写也会刷新 mtime = 最近使用),同 ms 再按名字降序兜底。
     let name: string | undefined;
@@ -100,9 +104,10 @@ export class SessionManager {
       name = names.find((n) => n.endsWith(`_${opts.sessionId}.jsonl`));
     }
     if (name === undefined) {
-      throw new Error(
-        `no session to resume under ${sm.dir}${opts.sessionId ? ` (id=${opts.sessionId})` : ""}`,
-      );
+      // 无 sessionId 且一条会话都没有 = 新开(H1 首次运行),首 append 才建文件;
+      // 显式给了 sessionId 却找不到 = 必须抛,静默返空会被当成空会话续写(M2 判卷注)。
+      if (opts.sessionId === undefined) return sm;
+      throw new Error(`no session to resume under ${sm.dir} (id=${opts.sessionId})`);
     }
     const file = join(sm.dir, name);
     let raw = readFileSync(file, "utf8");

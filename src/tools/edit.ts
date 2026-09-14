@@ -4,7 +4,7 @@
 // 全命中 → 一次 writeFile 落盘(AC-T2-2)。锚点按序应用(后锚在前锚结果上找,同 pi edit-diff)。
 // 工具层可 try/catch(loop 层零 try/catch 约束不含 src/tools/,同 read.ts)。
 import { readFile, writeFile } from "node:fs/promises";
-import type { Tool, ToolResult } from "../loop/types.js";
+import type { Tool, ToolResult } from "../loop/types.ts";
 
 function err(text: string): ToolResult {
   return { content: [{ type: "text", text }], isError: true };
@@ -18,6 +18,8 @@ function msg(e: unknown): string {
 
 export const editTool: Tool = {
   name: "edit",
+  description:
+    "Edit a file by exact text anchors. Each edit.oldText must occur in the file; its first occurrence is replaced by newText, anchors applied in order. A missing anchor aborts the whole call and writes nothing.",
   // AC-T2-4:loop run 前 ajv 校验(旁挂 JSON Schema,PRD tools 行"旁挂 JSON Schema")。
   schema: {
     type: "object",

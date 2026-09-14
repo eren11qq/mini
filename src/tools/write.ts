@@ -6,7 +6,7 @@
 // 工具层可 try/catch(loop 层零 try/catch 约束不含 src/tools/,同 read.ts/edit.ts)。
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { Tool, ToolResult } from "../loop/types.js";
+import type { Tool, ToolResult } from "../loop/types.ts";
 
 // 每路径一条 promise 链:新任务挂到当前尾巴后面 → 落盘严格串行。
 const tails = new Map<string, Promise<unknown>>();
@@ -35,6 +35,8 @@ function msg(e: unknown): string {
 
 export const writeTool: Tool = {
   name: "write",
+  description:
+    "Create or overwrite a file with the exact `content` given (whole file, not a patch). Use edit for small changes to an existing file.",
   // AC-T2-4 同款:loop run 前 ajv 校验(旁挂 JSON Schema,PRD tools 行)。
   schema: {
     type: "object",

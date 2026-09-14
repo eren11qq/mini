@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeTool } from "./write.js";
+import { writeTool } from "./write.ts";
 
 // T3 seam:writeTool via Tool.run(types.ts:110 公共接口)。磁盘状态 = 唯一真相源。
 // AC-T3-2:write 整文件落盘,内容字节级 = 传入 content。

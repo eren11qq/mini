@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { createStream } from "./openai-completions.js";
-import type { ProviderConfig, ProviderEvent } from "../loop/types.js";
+import { createStream } from "./openai-completions.ts";
+import type { ProviderConfig, ProviderEvent } from "../loop/types.ts";
 
 // AC-S4-1 验收句:deepseek 真实在线 smoke —— 持 DEEPSEEK_API_KEY 跑 createStream(默认 transport
 // = 真 fetch),收 ProviderEvent 流;断言 text_delta 与 toolcall_delta 均出现(模型真用工具)。

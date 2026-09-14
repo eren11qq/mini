@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolResult } from "../loop/types.js";
-import { readTool } from "./read.js";
+import type { ToolResult } from "../loop/types.ts";
+import { readTool } from "./read.ts";
 
 // T1 seam 1:read:Tool 公共接口。临时文件驱动,只断言 ToolResult 对外可见面,
 // 不触碰 read.ts 内部(实现可换,seam 不变)。

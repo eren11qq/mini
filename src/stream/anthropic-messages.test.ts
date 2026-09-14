@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { createStream } from "./openai-completions.js";
-import type { ProviderConfig, ProviderEvent, Transport } from "../loop/types.js";
+import { createStream } from "./openai-completions.ts";
+import type { ProviderConfig, ProviderEvent, Transport } from "../loop/types.ts";
 
 // AC-S3-2: thinking_delta 映射
 // Scenario:录制 anthropic SSE(含 thinking 块,脱敏)

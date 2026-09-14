@@ -2,9 +2,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SessionManager } from "./session-manager.js";
-import { SUMMARY_SECTIONS, buildSummarizePrompt } from "./summarize-prompt.js";
-import { runLoop } from "../loop/run-loop.js";
+import { SessionManager } from "./session-manager.ts";
+import { SUMMARY_SECTIONS, buildSummarizePrompt } from "./summarize-prompt.ts";
+import { runLoop } from "../loop/run-loop.ts";
 import type {
   AgentEvent,
   AgentMessage,
@@ -13,7 +13,7 @@ import type {
   ProviderEvent,
   StreamFn,
   UserMessage,
-} from "../loop/types.js";
+} from "../loop/types.ts";
 
 // M1 seam:SessionManager({baseDir,cwd}) 公共边界(PRD S3:SessionManager(tempDir) 写读断言)。
 // 磁盘 jsonl = 唯一真相源;不断言私有字段内部。
@@ -206,6 +206,19 @@ describe("M2 崩溃恢复:open 重开同一 jsonl", () => {
     ).toEqual([user("老会话")]);
     // 挑历史不得往最新会话写任何东西
     expect((await readdir(join(dir, sub))).filter((f) => f.endsWith(".jsonl"))).toHaveLength(2);
+  });
+});
+
+// H1 装配发现:全新机器(~/.mini 不存在)首次运行 = open 的正路,不是异常。
+// 原实现 readdirSync 直接 ENOENT 抛穿 harness;修 = 目录缺失按"无历史"处理。
+describe("M2 open:无任何历史(首次运行)", () => {
+  it("open({baseDir,cwd}) 不抛 → rebuild 空 → append 首建 jsonl → 历史可读", () => {
+    const cwd = join(dir, "first");
+    const sm = SessionManager.open({ baseDir: dir, cwd });
+    expect(sm.rebuild().messages).toEqual([]);
+
+    sm.append({ type: "message", payload: user("u1") });
+    expect(sm.rebuild().messages).toEqual([user("u1")]);
   });
 });
 

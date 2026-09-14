@@ -5,6 +5,7 @@
     "moduleResolution": "nodenext",
     "lib": ["ES2024"],
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,

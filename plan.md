@@ -742,6 +742,10 @@
 
 - Verification:人工
 - Priority:Required
+- **验收句**:`node src/harness/cli.ts`(H1 只一行配置 = deepseek-chat,密钥读 `DEEPSEEK_API_KEY`,会话落 `~/.mini/sessions/`)启动后输入"用 read 读 package.json 前 3 行,然后说 hello":thinking 段以 ANSI dim 逐字流出、正文逐字流出(非整块,`message_update` 快照只补新增后缀),write/edit/bash 调用前打一行确认(`1 Yes / 2 Yes, always / 3 No`)、read 放行,一轮结束回到 `>` 可续问;每 `message_end` 即时 append 一行 jsonl;provider 报错(如 401)必须在 stdout 可见(`[error] ...`)而非静默或栈崩;`src/harness/` 只有 cli.ts + renderer.ts,除组装外零 loop/校验/压缩逻辑 —— 这就算 H1 完。
+- **seams 与用户确认**:renderer = 唯一自动缝(`createRenderer(write)` 返回 `(event) => void`,数组 sink 断 ANSI 串),harness 其余照 DECISIONS W2 纯人工;`RunLoopOptions.confirm` 放宽为可返回 Promise(`run-loop.ts:195` 加 `await`,同步实现零改动);4 真工具补 `description`,read/bash 另补 `schema`(provider 的 `parameters` 单源 = `tool.schema`,harness 只做形态搬运);全仓 import specifier `.js` → `.ts` + tsconfig `allowImportingTsExtensions`(node v24 实测不回解 `.js`→`.ts`,`ERR_MODULE_NOT_FOUND`,G4 补注);`SessionManager.open` 首次运行(目录不存在)= 返回空历史而非抛,显式 `sessionId` 找不到仍抛。
+- **验证**:renderer 4 测(后缀增量 / dim 包裹 / `[error]` 可见 / `[aborted]` 可见)+ memory 首次运行回归 1 测红→绿;typecheck 0;eslint src/harness 0 问题;prettier 干净;全量 89 passed + 1 skipped(smoke)。离线端到端探针两支:①dummy key 打真 deepseek → stdout 出 `[error] HTTP 401`、jsonl 落 user 行、无栈崩、回 `>`;②pty(`script`)+ 挂起端口(本地 socket server 不回包)让流卡在途中,3s 后发 `\003` → stdout 出 `[aborted]` 并回 `>`(loop 的 `signal?.aborted` 检查在 switch 之前,故 transport 的 AbortError 被 abort 分支吃掉、不显示成 `[error]`),空转时再发 `\003` → 进程退出。真 key 人工演示待跑。
+- **已知残留**(H1 不修):①abort 后 `context.messages` 里留一条 `stopReason="aborted"` 的空 assistant 消息,下一轮原样发给 provider —— 是否被拒(400)只有真 key 能验,拒了则归 loop/memory 层清理,不属 harness;②story 16 的"中断在跑的工具"靠 loop 把 signal 传给 `tool.run`(bash 已实现杀进程组),write/edit 不观测 signal = 已在手的落盘不撤回。
 
 ### AC-H1-2: 流式逐字打印
 

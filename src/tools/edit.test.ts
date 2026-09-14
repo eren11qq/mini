@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { editTool } from "./edit.js";
+import { editTool } from "./edit.ts";
 
 // T2 seam:editTool via Tool.run(types.ts:107 公共接口)。磁盘状态 = 唯一真相源。
 // AC-T2-2:多锚点全命中 → 全部落盘、isError:false。

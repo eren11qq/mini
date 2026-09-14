@@ -9,8 +9,8 @@ import type {
   StopReason,
   Transport,
   Usage,
-} from "../loop/types.js";
-import { salvage } from "./openai-completions.js";
+} from "../loop/types.ts";
+import { salvage } from "./openai-completions.ts";
 
 const STOP_TO_REASON: Record<string, StopReason> = {
   end_turn: "stop",

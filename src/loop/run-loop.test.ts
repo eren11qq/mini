@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runLoop } from "./run-loop.js";
+import { runLoop } from "./run-loop.ts";
 import type {
   AgentEvent,
   AssistantMessage,
@@ -9,7 +9,7 @@ import type {
   Tool,
   ToolCallBlock,
   ToolResultMessage,
-} from "./types.js";
+} from "./types.ts";
 
 // AC-L1-2:纯文本一轮停
 // Scenario:假 streamFn 只吐 text_delta 序列(无 toolCall),done stopReason 非 tool_use

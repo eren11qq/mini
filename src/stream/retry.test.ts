@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { createStream, TransportError } from "./openai-completions.js";
-import type { ProviderConfig, ProviderEvent, Transport } from "../loop/types.js";
+import { createStream, TransportError } from "./openai-completions.ts";
+import type { ProviderConfig, ProviderEvent, Transport } from "../loop/types.ts";
 
 // AC-S2-2: 5xx 重试 1 次成功
 // Scenario:mock fetch 第 1 次 503、第 2 次 200+正常 SSE

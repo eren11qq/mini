@@ -12,8 +12,8 @@ import type {
   ToolResultMessage,
   ThinkingBlock,
 } from "./types.ts";
-import { validateArgs } from "./validate.js";
-import { appendRule, isValidSeed, loadRules, type Rule } from "./rules.js";
+import { validateArgs } from "./validate.ts";
+import { appendRule, isValidSeed, loadRules, type Rule } from "./rules.ts";
 
 // mini runLoop:L2。toolCall 执行 + toolResult 回填 + 同批串行 + maxTurns 保险丝。
 // 双层 while 形状照抄 pi(steering/followUp 队列不挂 → 外层由停止条件退)。
@@ -192,7 +192,7 @@ export async function* runLoop(
           if (tool.skipConfirm || !options.confirm || preapproved) {
             result = await tool.run(call.arguments, signal);
           } else {
-            const answer = options.confirm(
+            const answer = await options.confirm(
               `Execute: ${tool.name}(${JSON.stringify(call.arguments)})? ❯1 Yes / 2 Yes, always / 3 No`,
             );
             if (answer === "no") {

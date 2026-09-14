@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { createStream, TransportError } from "./openai-completions.js";
-import type { ProviderConfig, ProviderEvent, Transport } from "../loop/types.js";
+import { createStream, TransportError } from "./openai-completions.ts";
+import type { ProviderConfig, ProviderEvent, Transport } from "../loop/types.ts";
 
 // AC-S1-2:协议映射
 // Scenario:录制一段 deepseek 真实 SSE(脱敏存 fixture)
