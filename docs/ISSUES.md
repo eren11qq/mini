@@ -3,7 +3,7 @@
 本地 tracker。源 = 2026-09-15 设计对话(plan: confirm 系统分层流水线)。
 目标:弹窗从"每次工具调用"降为"仅未预批且非只读的边界动作",同时堵复合命令越权洞。
 分层顺序(所有片共同遵守):工具分级 → 参数解析 → 危险黑名单 → allow 判定(内置只读表 + rules)→ 弹窗兜底。
-合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。C15(/model 自配 key)= PRD 翻案卡,独立于 C10-C14 链,2026-09-15 插队先做。kilocode 对标三卡 C16(弹层特效)→C17(/connect 向导)→C18(/model 收口)按序合,C17 blocked by C16、C18 blocked by C17。
+合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。C15(/model 自配 key)= PRD 翻案卡,独立于 C10-C14 链,2026-09-15 插队先做。kilocode 对标三卡 C16(弹层特效)→C17(/connect 向导)→C18(/model 收口)按序合,C17 blocked by C16、C18 blocked by C17。展示升级弹头三卡(2026-09-16 立,Claude Code 式工具渲染):C19(edit diff 穿全层)先行,C20(write diff)/C21(bash ⎿ 树)blocked by C19 且互可并行;C19 建议先于 C17 落(tui.ts 邻区防撞)。C22 = skill 三段式(Kilo 同款:扫目录→元数据表进 prompt→工具按需注入)预留号,未建卡。
 
 ---
 
@@ -369,3 +369,87 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 - [ ] `/model qwen sk-xxx` 不再落盘:报「多余参数」用法行;C15 已存 keys.json 仍可切
 - [ ] C15 离线剧本重跑(键入口换 `/connect` 后)全绿;switchModel 单入口零分叉
 - [ ] 文档三处同步:ISSUES C15 注、plan.md AC-S1-4、DECISIONS S4(入口名改 `/connect`)
+
+---
+
+## C19 — edit 工具红绿 diff 上屏(Claude Code 式展示 · tracer bullet)
+
+**Type**: AFK(真机抽验) · **Blocked by**: 无(三卡之首,C20/C21 共用其机器)
+
+### What to build
+
+现状:`tool_execution_end` 的 result 被 `previewResult`→`oneLine(80)` 压成一行,换行全杀,屏幕上永远看不到代码改动本体。本片单刀穿全层(schema→工具→事件→渲染),打通「工具产出结构化 diff → TUI 上色折叠」的弹头通道,参照 Claude Code `⎿` 树 + Kilo 渲染分级:
+
+- `ToolResult` 加可选 `details` 侧信道。关键事实(2026-09-16 源码核):run-loop 把 result **按引用**塞进事件(`result: unknown` 透传),loop/stream **零改动**;持久化只走 `content` → provider 每轮重吃大 diff 的 token 污染从根上绕开。载荷形状(原型期决策形,实现时照此钉):
+
+```ts
+export type ToolDetails =
+  | {
+      kind: "diff";
+      path: string;
+      added: number;
+      removed: number;
+      hunks: DiffHunk[];
+      truncated?: boolean;
+    }
+  | { kind: "out"; text: string }; // C21 消费,本片只定形状
+export interface DiffRow {
+  t: "+" | "-" | " ";
+  s: string;
+}
+export interface DiffHunk {
+  oldStart: number;
+  newStart: number;
+  rows: DiffRow[];
+}
+```
+
+- 新纯叶 `src/util/diff.ts`:行级 diff = 掐公共前后缀 + 中段 LCS DP(滚动 Int32Array);中段积 >250k 格退化为全删全增(仍正确,计数恒全量);hunk = 变更行 ±2 上下文,gap ≤2·ctx+1 并带;存 hunk 行封顶 180 + `truncated`。非 Myers:四倍代码换不来 ctx=2 预览可感知的最小性。零 npm 红线内手撕。
+- edit.ts 成功分支挂 `details = diffDetails(path, 全文旧, 全文新)`(两串已在内存,零额外 I/O);失败/abort 零 details → warn 路径逐字节旧样。
+- TUI:`Entry` 加可选 `details?`(不新增 EntryKind,无 details 旧路径白拿 diff=0 锚);`entryLines` 加第三参 `verbose = false` 透传;渲染枝输出 = `⎿`(U+23BF,码点常量,WT 若画双宽退 `└` U+2514,C13 探针流程判)+ `+N`/`−M` 汇总行 + hunk 行(`+` 绿 `-` 红 上下文 dim,续行 2 列缩进),非 verbose 正文 8 行封顶 + `… +N 行(Ctrl+O 展开)`,复用 C11 think 折叠同机关。行仍走 wrapLines→tail-slice→pad 管道,columns-1/≤height/vw=width 三契约结构不破。
+- `ansi.ts` 新叶 `RED = \x1b[31m`(逐条 pin 用例同步)。
+
+### Acceptance criteria
+
+- [ ] `util/diff.test.ts`:纯增/纯删/中段替换 ctx=2 窗/近距并 hunk 远距拆/gap=2·ctx+1 边界/600×600 走退化路且 added·removed 计数精确/尾换行翻转显 ± 空行/超 180 行 `truncated:true` 计数仍全量
+- [ ] edit.test:成功 run → details 的 ± 行与锚点区一致且原行成 `" "` 上下文;abort/未命中 → `details === undefined`
+- [ ] tui-view.test 新 describe:红绿开闭序列逐字节(码点钉)、折叠算式(9 行正文 → 8 + `… +1 行`)、verbose 全展、含大 diff 条目整屏仍 ≤height 且每行 vw=width;无 details tool 条目 = diff=0 锚逐字节不变;user/bot/warn 负锚
+- [ ] stream/serialize/session 文件零动;`--continue` 回放与今平价(tool 结果本就不落盘)
+- [ ] 真机抽验(W2):TTY 让 agent edit 一行 → 眼看 `-` 红 `+` 绿、上下文灰、`⎿` 单宽;Ctrl+O 展开;文案(`⎿ +N −M 行` / `… +N 行(Ctrl+O 展开)`)人审终判写回本行
+
+---
+
+## C20 — write 覆盖 → 全文件 diff
+
+**Type**: AFK · **Blocked by**: C19(diff 机器 + 折叠渲染全复用,本片只添一次读)
+
+### What to build
+
+write.ts 今天盲写(不读旧内容)。在其既有 per-path enqueue 串行内、`writeFile` 前加 best-effort 读旧:ENOENT = 新建 → 旧串按空 diff = 全绿;其他读失败 = 降级当新建但**写入照常成功**(不因展示层饿死主功能)。成功分支挂 `details = diffDetails(path, 旧, a.content)`,与 edit 同机器同折叠同色规。
+
+### Acceptance criteria
+
+- [ ] write.test:新建 → 全 `+` 行 removed=0;覆盖 → 红绿真 diff;旧文件 EACCES → details 按新建算且写入不失败
+- [ ] 读发生在 enqueue 串行段内(无新并发面),既有 write 时序测试零回归
+- [ ] 真机抽验:让 agent 覆盖一个既有文件 → 屏上见红删绿增,`⎿` 汇总计数对
+
+---
+
+## C21 — bash → `⎿` 输出树(折叠同式)
+
+**Type**: AFK(文案终判需人) · **Blocked by**: C19(共吃 `details` 侧信道与折叠式样;与 C20 并行)
+
+### What to build
+
+bash 成功返回挂 `details = { kind: "out", text: content[0].text 原文 }`(不发明新结构,存的就是模型吃到的那段:exit code 行 + tail 截断 + `full output: path` 尾注,原样)。TUI 两处:
+
+- header 后缀:`kind==="out"` 时 `previewResult` 改取 content **首行**(如 `bash ls → exit code 0 ✓`),不再三行压扁;其余 kind 旧式逐字节不变
+- 正文:`⎿ ` 首行 + 后续行 DIM 两列缩进,8 行封顶折叠,同 C19 式样同 Ctrl+O 全展
+
+timeout/错误 fail 分支零 details → 旧 warn 路径不动。plain 模式零动(增量打印机无折叠机关,DEFERRED 既有「TUI 差分渲染」行随 C19-C21 落地划掉)。
+
+### Acceptance criteria
+
+- [ ] bash.test:`echo hi` 成功 → `details.text === content[0].text`;timeout 路径 → undefined
+- [ ] tui-view.test:out 树逐字节(⎿ 首行/续行缩进/30 行 → 8 + `… +22 行` 折叠算式/verbose 全展);header 首行式对 `out` 生效且其余 kind diff=0 负锚
+- [ ] 真机:跑 `seq 30` → 树 8 行折叠,Ctrl+O 全展;文案终判写回
