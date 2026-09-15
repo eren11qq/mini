@@ -27,6 +27,10 @@ export interface Tool {
   // `path:`+规范化路径),交 rules.ruleMatches 判家族/glob/相等。
   // 缺省 = JSON.stringify(args)(无域知识工具整串精确匹配,旧语义)。
   matchOf?: (args: unknown) => string;
+  // C3(docs/ISSUES.md):声明 matchOf 输入是 shell 命令 → loop 用 bash-parse 拆段逐段过检,
+  // 任一段不命中即弹;always 落盘逐段种子。缺省 = C2 单输入路径。
+  // 域知识 = 一个枚举标记,解析语法知识住 loop/bash-parse.ts,matcher 仍零工具名知识。
+  matchKind?: "shell";
   // Story 16 / T4:loop 把 options.signal 透传给 run,工具(尤其 bash)据此中断/杀进程树。
   // 可选参 → 不观测 signal 的既有工具零改动。
   run(args: unknown, signal?: AbortSignal): Promise<ToolResult>;

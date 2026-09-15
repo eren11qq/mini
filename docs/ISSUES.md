@@ -61,11 +61,11 @@ loader 归一化:旧 `{tool:"bash",prefix:"git:*"}` → tokens `["git"]`(family 
 
 ### Acceptance criteria
 
-- [ ] 有 `["git","status"]` 规则时 `git status && rm -rf ~/x` 弹;单 `git status` 免弹
-- [ ] `git add -A && git commit -m x` 选 always → 落 `["git","add"]` + `["git","commit"]` 两条,重跑 0 弹
-- [ ] `echo $(whoami)` 段带命令替换,不被判纯只读
-- [ ] 未闭合引号 `git status && echo "oops` → 整条弹,不崩
-- [ ] parser 纯函数单测:分隔符在引号内不误拆(`echo "a && b"`)
+- [x] 有 `["git","status"]` 规则时 `git status && rm -rf ~/x` 弹;单 `git status` 免弹(bash.test AC-C3-1)
+- [x] `git add -A && git commit -m x` 选 always → 落 `["git","add"]` + `["git","commit"]` 两条,重跑 0 弹(AC-C3-2 以只读 git 段同形验证:真 add 在 cwd=本仓库会污染 index)
+- [x] `echo $(whoami)` 段带命令替换,不被判纯只读(bash-parse substitution 标记;双引号内 `$( )` 也标)
+- [x] 未闭合引号 `git status && echo "oops` → 整条弹,不崩(parser ok:false + loop 必弹兜底,AC-C3-4)
+- [x] parser 纯函数单测:分隔符在引号内不误拆(`echo "a && b"`)(bash-parse.test.ts 10 例)
 
 ---
 
