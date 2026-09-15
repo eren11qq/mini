@@ -10,7 +10,7 @@ import type { TextBlock, ThinkingBlock, ToolCallBlock } from "../blocks.ts";
 import type { Tool, ToolResult } from "../tools/tool.ts";
 import type { StreamFn } from "../stream/protocol.ts";
 import { validateArgs } from "./validate.ts";
-import { appendRule, isValidSeed, loadRules, type Rule } from "./rules.ts";
+import { appendRule, isValidSeed, loadRules, ruleMatches, type Rule } from "./rules.ts";
 
 // mini runLoop:L2。toolCall 执行 + toolResult 回填 + 同批串行 + maxTurns 保险丝。
 // 双层 while 形状照抄 pi(steering/followUp 队列不挂 → 外层由停止条件退)。
@@ -182,10 +182,12 @@ export async function* runLoop(
           result = { content: [{ type: "text", text: vErr }], isError: true };
         } else {
           // AC-T2-5/6/7/8 beforeToolCall 确认门(逻辑在 loop,story 24;confirm 缺省 = 放行,
-          // PRD line 100)。AC-T2-7:命中 rules(tool+prefix 相等)免弹;always 落盘,
+          // PRD line 100)。AC-T2-7+C2:命中 rules(ruleMatches:token 家族/path glob/相等,
+          // 判据输入 = matchOf 完整事实)免弹;always 落盘 prefixOf 种子,
           // `*`/空种子拒写(AC-T2-8 无一键全允许)退化为一次性 yes。
-          const subject = tool.prefixOf?.(call.arguments) ?? JSON.stringify(call.arguments);
-          const preapproved = rules.some((r) => r.tool === tool.name && r.prefix === subject);
+          const input = tool.matchOf?.(call.arguments) ?? JSON.stringify(call.arguments);
+          const seed = tool.prefixOf?.(call.arguments) ?? input;
+          const preapproved = rules.some((r) => r.tool === tool.name && ruleMatches(r, input));
           if (tool.skipConfirm || !options.confirm || preapproved) {
             result = await tool.run(call.arguments, signal);
           } else {
@@ -199,8 +201,8 @@ export async function* runLoop(
               };
             } else {
               result = await tool.run(call.arguments, signal);
-              if (answer === "always" && rulesPath && isValidSeed(subject)) {
-                rules = await appendRule(rulesPath, { tool: tool.name, prefix: subject });
+              if (answer === "always" && rulesPath && isValidSeed(seed)) {
+                rules = await appendRule(rulesPath, { tool: tool.name, prefix: seed });
               }
             }
           }

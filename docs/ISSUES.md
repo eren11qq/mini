@@ -19,11 +19,11 @@
 
 ### Acceptance criteria
 
-- [ ] 同一文件连续 edit 两次,confirm 仅首弹(第二次走 always 落盘规则)
-- [ ] 规则 `path:src/**` 命中 `src/a.ts`,不命中 `docs/x.md`;`path:src/*` 不命中 `src/sub/a.ts`
-- [ ] cwd 外绝对路径 → 弹且 always 被拒退化为一次性 yes
-- [ ] 旧 rules.json(含全 JSON 串条目)载入不崩、行为不回退
-- [ ] 确认逻辑仍在 loop 侧,工具源零确认代码(AC-T2-6 约束不破)
+- [x] 同一文件连续 edit 两次,confirm 仅首弹(第二次走 always 落盘规则)
+- [x] 规则 `path:src/**` 命中 `src/a.ts`,不命中 `docs/x.md`;`path:src/*` 不命中 `src/sub/a.ts`
+- [x] cwd 外绝对路径 → 弹且 always 被拒退化为一次性 yes
+- [x] 旧 rules.json(含全 JSON 串条目)载入不崩、行为不回退
+- [x] 确认逻辑仍在 loop 侧,工具源零确认代码(AC-T2-6 约束不破)
 
 ---
 

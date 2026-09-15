@@ -35,6 +35,8 @@ export const bashTool: Tool = {
         .trim()
         .split(/\s+/)[0]
     }:*`,
+  // C2:判据输入 = 整条命令,ruleMatches 按 token 家族/git status:* 级规则免弹。
+  matchOf: (a) => String((a as { command?: unknown }).command ?? "").trim(),
   async run(args: unknown, loopSignal?: AbortSignal): Promise<ToolResult> {
     // 契约:失败转 isError 回喂,run 不 throw。
     try {

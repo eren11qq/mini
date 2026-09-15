@@ -262,6 +262,7 @@ function fakeBash(calls: { n: number }): Tool {
   return {
     name: "bash",
     prefixOf: (a) => `${String((a as { command?: unknown }).command ?? "").split(/\s+/)[0]}:*`,
+    matchOf: (a) => String((a as { command?: unknown }).command ?? ""),
     async run() {
       calls.n += 1;
       return { content: [{ type: "text", text: "ok" }], isError: false };
@@ -374,5 +375,115 @@ describe("T2 AC-T2-8: 手删 rules.json 即撤销 + 无一键全允许", () => {
       }),
     );
     expect(s2.prompts).toHaveLength(1); // 永远要问 = 没有全允许
+  });
+});
+
+// C2(docs/ISSUES.md):规则匹配从"整串相等"升级为 ruleMatches(token 前缀家族)。
+// 判据输入 = 完整命令(matchOf),不再拿 prefixOf 种子串比种子串。
+describe("C2 端到端:token 家族规则过确认门", () => {
+  it("规则 `git status:*` → `git status -sb` 免弹执行;`git commit -m x` 仍弹", async () => {
+    const rulesPath = join(dir, "rules-c2.json");
+    await writeFile(rulesPath, JSON.stringify([{ tool: "bash", prefix: "git status:*" }]));
+    const calls = { n: 0 };
+
+    const s1 = confirmSpy("no"); // 免弹故应答无意义;若弹 → 拦下 → prompts 1 = 红
+    await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("c1", "bash", { command: "git status -sb" })),
+        [fakeBash(calls)],
+        { messages: [{ role: "user", content: "s" }] },
+        { confirm: s1.confirm, rulesPath },
+      ),
+    );
+    expect(s1.prompts).toHaveLength(0);
+    expect(calls.n).toBe(1);
+
+    const s2 = confirmSpy("no");
+    await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("c2", "bash", { command: "git commit -m x" })),
+        [fakeBash(calls)],
+        { messages: [{ role: "user", content: "c" }] },
+        { confirm: s2.confirm, rulesPath },
+      ),
+    );
+    expect(s2.prompts).toHaveLength(1);
+    expect(calls.n).toBe(1); // no → 未执行
+  });
+});
+
+// C1(docs/ISSUES.md):文件类种子 = 规范化 path(`path:` 域),内容变化不再击落规则;
+// cwd 外路径 → prefixOf 返 `*` 拒写标记(AC-T2-8 既有机器退化一次性 yes,loop 零新码)。
+describe("C1 端到端:write 的 always 必粘 + cwd 外拒粘", () => {
+  let cwdTmp: string;
+  beforeAll(async () => {
+    cwdTmp = await mkdtemp(join(process.cwd(), ".mini-c1-")); // 故意落在 cwd 内
+  });
+  afterAll(async () => {
+    await rm(cwdTmp, { recursive: true, force: true });
+  });
+
+  it("同文件两次 write(内容不同)均应答 always → confirm 仅 1 次、两次都落盘", async () => {
+    const rulesPath = join(dir, "rules-c1a.json");
+    const path = join(cwdTmp, "a.txt"); // cwd 内 → 相对 path: 种子
+    const s = confirmSpy("always");
+    for (const content of ["V1", "V2"]) {
+      await collect(
+        runLoop(
+          twoTurnStream(toolCallTurn(`w-${content}`, "write", { path, content })),
+          [writeTool],
+          { messages: [{ role: "user", content }] },
+          { confirm: s.confirm, rulesPath },
+        ),
+      );
+    }
+    expect(s.prompts).toHaveLength(1); // 现状 bug 在此红:种子=整 JSON,内容变即脱靶
+    expect(await readFile(path, "utf8")).toBe("V2");
+    const rules: unknown = JSON.parse(await readFile(rulesPath, "utf8"));
+    expect(rules).toEqual(
+      expect.arrayContaining([
+        { tool: "write", prefix: expect.stringMatching(/^path:\.mini-c1-[^/]+\/a\.txt$/) },
+      ]),
+    );
+  });
+
+  it("同文件连续 edit 两次(锚点不同)均 always → confirm 仅首弹,两批锚皆落盘", async () => {
+    const rulesPath = join(dir, "rules-c1c.json");
+    const path = join(cwdTmp, "e.txt");
+    await writeFile(path, "aaa\nbbb");
+    const s = confirmSpy("always");
+    for (const [id, oldText, newText] of [
+      ["e1", "aaa", "AAA"],
+      ["e2", "bbb", "BBB"],
+    ] as const) {
+      await collect(
+        runLoop(
+          twoTurnStream(toolCallTurn(id, "edit", { path, edits: [{ oldText, newText }] })),
+          [editTool],
+          { messages: [{ role: "user", content: id }] },
+          { confirm: s.confirm, rulesPath },
+        ),
+      );
+    }
+    expect(s.prompts).toHaveLength(1);
+    expect(await readFile(path, "utf8")).toBe("AAA\nBBB");
+  });
+
+  it("cwd 外绝对路径 always → 规则拒写,第二次仍弹(prompts 2)", async () => {
+    const rulesPath = join(dir, "rules-c1b.json");
+    const path = join(dir, "out.txt"); // /tmp = cwd 外
+    const s = confirmSpy("always");
+    for (const content of ["A", "B"]) {
+      await collect(
+        runLoop(
+          twoTurnStream(toolCallTurn(`o-${content}`, "write", { path, content })),
+          [writeTool],
+          { messages: [{ role: "user", content }] },
+          { confirm: s.confirm, rulesPath },
+        ),
+      );
+    }
+    expect(s.prompts).toHaveLength(2);
+    expect(await readFile(rulesPath, "utf8").catch(() => "[]")).toBe("[]");
   });
 });

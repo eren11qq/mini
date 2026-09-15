@@ -4,6 +4,7 @@
 // (schema→parameters/input_schema),cli 的 providerTools 预映射删除。
 // Tool.run 失败靠返回 isError:true ToolResult 回喂,不 throw(L3 error 进流同样约束)。
 // confirm gate 留 T2(beforeToolCall hook),L2 工具直接执行。
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { TextBlock } from "../blocks.ts";
 
 export interface Tool {
@@ -19,13 +20,27 @@ export interface Tool {
   // 缺省 false → 新工具自动过安检(story 24,确认逻辑在 loop 不在工具)。
   skipConfirm?: boolean;
   // T2 AC-T2-7:"always" 落盘的规则种子抽取器(工具声明域知识,确认逻辑仍在 loop)。
-  // bash 的 `git push` → `git:*`。loop 对同工具的新调用再抽一次,字符串相等 = 免弹。
-  // 缺省 = 用 JSON.stringify(args) 整参精确匹配。
+  // bash 的 `git push` → `git:*`。C2 起落盘值与判据输入分离:种子只决定"存什么"。
+  // 缺省 = 用 matchOf(再缺省 = JSON.stringify(args))同值,整串相等。
   prefixOf?: (args: unknown) => string;
+  // C2(docs/ISSUES.md):确认门判据输入 = 完整待执行事实(bash 给整条命令、文件类给
+  // `path:`+规范化路径),交 rules.ruleMatches 判家族/glob/相等。
+  // 缺省 = JSON.stringify(args)(无域知识工具整串精确匹配,旧语义)。
+  matchOf?: (args: unknown) => string;
   // Story 16 / T4:loop 把 options.signal 透传给 run,工具(尤其 bash)据此中断/杀进程树。
   // 可选参 → 不观测 signal 的既有工具零改动。
   run(args: unknown, signal?: AbortSignal): Promise<ToolResult>;
 }
+// C1(docs/ISSUES.md):文件类工具的 matchOf/prefixOf 共用域抽取 = `path:` + cwd 内
+// 规范化相对路径(正斜杠);cwd 外/盘根 → 返 `*` = AC-T2-8 既有拒写标记,always 退化
+// 一次性 yes(loop 零新码)。
+export function pathInput(a: unknown): string {
+  const abs = resolve(String((a as { path?: unknown }).path ?? ""));
+  const rel = relative(process.cwd(), abs);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return "*";
+  return `path:${rel.split(sep).join("/")}`;
+}
+
 export interface ToolResult {
   content: TextBlock[];
   isError: boolean;

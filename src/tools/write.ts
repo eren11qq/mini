@@ -6,7 +6,7 @@
 // 工具层可 try/catch(loop 层零 try/catch 约束不含 src/tools/,同 read.ts/edit.ts)。
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { Tool, ToolResult } from "./tool.ts";
+import { pathInput, type Tool, type ToolResult } from "./tool.ts";
 
 // 每路径一条 promise 链:新任务挂到当前尾巴后面 → 落盘严格串行。
 const tails = new Map<string, Promise<unknown>>();
@@ -47,6 +47,9 @@ export const writeTool: Tool = {
     required: ["path", "content"],
     additionalProperties: false,
   },
+  // C1:种子与判据都只看 path(内容变化不再击落 always 规则);cwd 外 → `*` 拒粘。
+  matchOf: pathInput,
+  prefixOf: pathInput,
   async run(args: unknown): Promise<ToolResult> {
     const a = args as { path?: unknown; content?: unknown };
     const path = String(a.path);
