@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { runLoop } from "../loop/run-loop.ts";
+import type { Rule } from "../loop/rules.ts";
 import type { LoopContext, UserMessage } from "../loop/types.ts";
 import { makeSummarizeFn } from "../memory/compaction.ts";
 import { SessionManager } from "../memory/session-manager.ts";
@@ -88,6 +89,9 @@ async function main(): Promise<void> {
   // Story 16:Ctrl+C = 中断在跑的那一轮(stream + 工具),空转时 = 退出。
   // 中断语义全在 loop(AC-L3-4/6),这里只按开关。
   let controller: AbortController | null = null;
+  // C6 AC-1:session 档规则容器 —— 进程作用域,跨每轮的多次 runLoop 存活(= "本 run 有效"),
+  // 永不落盘;进程退出即失效(新 run 复弹)。撤销语义仍只有一条路:手删 rules.json(C2 不变式)。
+  const sessionRules: Rule[] = [];
   io.onInterrupt(() => {
     if (controller) controller.abort();
     else {
@@ -232,8 +236,9 @@ async function main(): Promise<void> {
       for await (const event of runLoop(streamFn, TOOLS, context, {
         signal: controller.signal, // SIGINT → loop 停该轮(工具侧 bash 杀进程组)
         rulesPath: join(cwd, "rules.json"), // T2/D4:生产规则落 <cwd>/rules.json
-        confirm: (prompt) => io.confirm(prompt), // 答案映射在 tui.ts(与旧逐字等价)
+        confirm: (prompt) => io.confirm(prompt), // 四档答案映射在 tui.ts(mapConfirm)
         autoAcceptEdits: args.autoAcceptEdits, // C7:cli flag → loop 直通判据(默认 false = 零变化)
+        sessionRules, // C6:答 2 = 规则进此数组(内存,本 run 免弹,不落盘)
       })) {
         io.render(event);
         if (event.type === "message_end") {

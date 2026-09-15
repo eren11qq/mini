@@ -124,11 +124,12 @@ tui.ts 与 cli readline 两处答案映射同步改 1/2/3/4。
 
 ### Acceptance criteria
 
-- [ ] session 选择 → 同 run 内重跑免弹;新 run 恢复弹;rules.json 无新条目
-- [ ] always 打印的规则文案与 rules.json 实际落盘内容逐字一致(vitest 解析断言)
-- [ ] no + 理由 → 模型收到的 toolResult 含理由文本
-- [ ] 复合命令的 always 建议=每段一条,打印数=落盘数
-- [ ] 键盘映射不破坏既有输入流(TUI 确认等待态吞行逻辑)
+- [x] session 选择 → 同 run 内重跑免弹;新 run 恢复弹;rules.json 无新条目(registry C6 AC-1 两例)
+- [x] always 打印的规则文案与 rules.json 实际落盘内容逐字一致(vitest 解析断言,`printedRules` 抽面 == JSON 盘面)
+- [x] no + 理由 → 模型收到的 toolResult 含理由文本(`user rejected: bash — <理由>`,无理由 = 旧文本逐字不变)
+- [x] 复合命令的 always 建议=每段一条,打印数=落盘数(变异测:删列表渲染 → 此锚独红)
+- [~] 键盘映射:`mapConfirm` 四档 1/2/3/4 + `4 <理由>` 有测(tui.test.ts);TUI 确认等待态吞行不破坏 = 归 C8 W 剧本人工跑
+- 实现注记:`ConfirmAnswer = {kind:"yes"|"session"|"always"|"no", reason?}`(住 loop/types,C6 单一契约);session 容器 = `RunLoopOptions.sessionRules`(cli 进程作用域一条,跨每轮 runLoop 存活,loop 只 push 永不写盘);弹面三行 = 原因+命令 / 四档键位 / 将落盘规则,规则行与落盘共用 `writable` 一份数组(`fmtRule` = `<tool>␣␣<prefix>`)
 
 ---
 

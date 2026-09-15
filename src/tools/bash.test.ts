@@ -135,7 +135,7 @@ describe("T4 bash:过 loop 确认门", () => {
       runLoop(twoTurnText(bashCallTurn("c1", { command: `touch ${marker}` })), [bashTool], ctx, {
         confirm: (p) => {
           prompts.push(p);
-          return "no";
+          return { kind: "no" as const };
         },
       }),
     );
@@ -163,7 +163,7 @@ describe("C3 复合命令逐段过检(真 bashTool 过 loop 门)", () => {
     const prompts: string[] = [];
     const confirm = (p: string) => {
       prompts.push(p);
-      return "no" as const;
+      return { kind: "no" as const };
     };
 
     const ctx1: LoopContext = { messages: [{ role: "user", content: "chained" }] };
@@ -197,7 +197,7 @@ describe("C3 复合命令逐段过检(真 bashTool 过 loop 门)", () => {
     const prompts: string[] = [];
     const confirm = (answer: "always" | "no") => (p: string) => {
       prompts.push(p);
-      return answer;
+      return { kind: answer };
     };
 
     const ctx1: LoopContext = { messages: [{ role: "user", content: "a" }] };
@@ -231,7 +231,7 @@ describe("C3 复合命令逐段过检(真 bashTool 过 loop 门)", () => {
     const prompts: string[] = [];
     const confirm = (p: string) => {
       prompts.push(p);
-      return "always" as const;
+      return { kind: "always" as const };
     };
     const cmd = { command: 'echo "oops' };
 

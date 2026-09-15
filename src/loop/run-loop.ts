@@ -206,14 +206,17 @@ export async function* runLoop(
               : tool.matchKind === "path"
                 ? dangerOfPath(input)
                 : null;
+          // C6 AC-1:session 档与持久规则同匹配器、同短路点 —— 唯一差别是不落盘,
+          // 故判据输入 = rules ∪ sessionRules(黑名单 danger 仍在最外层压制,两者皆不可豁免)。
+          const known = options.sessionRules ? rules.concat(options.sessionRules) : rules;
           const preapproved =
             danger === null &&
             (parsed === null
-              ? rules.some((r) => r.tool === tool.name && ruleMatches(r, input))
+              ? known.some((r) => r.tool === tool.name && ruleMatches(r, input))
               : parsed.ok &&
                 parsed.segments.length > 0 &&
                 parsed.segments.every((seg) =>
-                  rules.some((r) => r.tool === tool.name && ruleMatches(r, seg.text)),
+                  known.some((r) => r.tool === tool.name && ruleMatches(r, seg.text)),
                 ));
           // C7(docs/ISSUES.md):--auto-accept-edits —— matchKind:"path" 且种子为 cwd 内
           // 相对 `path:`(cwd 外 = `*`/绝对,已被上一行 danger 与 C1 拒粘拦住)直通免弹。
@@ -224,31 +227,60 @@ export async function* runLoop(
             danger === null &&
             seed.startsWith("path:") &&
             !isAbsolute(seed.slice(5));
+          // C6 AC-2:建议规则集 = 弹面与落盘面的唯一来源(绝不两套字符串)。
+          // shell = 每段一条(seedOf);非 shell = 一条 prefixOf 种子;无效种子(`*`/空)与
+          // 解析失败(未闭合引号)不入面 → 打印数恒等于落盘数(AC-4)。
+          const writable: Rule[] = (
+            parsed !== null && parsed.ok
+              ? parsed.segments.map((seg) => ({ tool: tool.name, prefix: seedOf(seg) }))
+              : parsed === null
+                ? [{ tool: tool.name, prefix: seed }]
+                : []
+          ).filter((r) => isValidSeed(r.prefix));
           if (tool.skipConfirm || !options.confirm || preapproved || autoAccepted) {
             result = await tool.run(call.arguments, signal);
           } else {
+            // 三行弹面:原因+命令 / 四档键位 / 将落盘规则(黑名单命中 = 无第三行,always 亦不落盘)。
+            const ruleLines =
+              danger !== null || writable.length === 0
+                ? []
+                : writable.length === 1
+                  ? [`  3 将落盘 1 条规则: ${writable.map(fmtRule).join(" / ")}`]
+                  : [
+                      `  3 将落盘 ${writable.length} 条规则:`,
+                      ...writable.map((r) => `    ${fmtRule(r)}`),
+                    ];
             const answer = await options.confirm(
-              `${danger ? `⚠ ${danger} — ` : ""}Execute: ${tool.name}(${JSON.stringify(call.arguments)})? ❯1 Yes / 2 Yes, always / 3 No`,
+              [
+                `${danger ? `⚠ ${danger} — ` : ""}Execute: ${tool.name}(${JSON.stringify(call.arguments)})?`,
+                "❯ 1 Yes (once)  2 Yes + session  3 Yes + always  4 No",
+                ...ruleLines,
+              ].join("\n"),
             );
-            if (answer === "no") {
+            if (answer.kind === "no") {
+              // C6 AC-3:理由原文随拒因回喂(模型据此改方案重试;无理由 = 与旧文本逐字等价)。
               result = {
-                content: [{ type: "text", text: `user rejected: ${tool.name}` }],
+                content: [
+                  {
+                    type: "text",
+                    text: answer.reason
+                      ? `user rejected: ${tool.name} — ${answer.reason}`
+                      : `user rejected: ${tool.name}`,
+                  },
+                ],
                 isError: true,
               };
             } else {
               result = await tool.run(call.arguments, signal);
               // C5:黑名单命中时 always 不落盘(答了也白写,下次仍弹 = 只误导)。
-              if (answer === "always" && rulesPath && danger === null) {
-                if (parsed !== null && parsed.ok) {
-                  for (const seg of parsed.segments) {
-                    const segSeed = seedOf(seg);
-                    if (isValidSeed(segSeed)) {
-                      rules = await appendRule(rulesPath, { tool: tool.name, prefix: segSeed });
-                    }
-                  }
-                } else if (parsed === null && isValidSeed(seed)) {
-                  rules = await appendRule(rulesPath, { tool: tool.name, prefix: seed });
+              if (answer.kind === "always" && rulesPath && danger === null) {
+                for (const r of writable) {
+                  rules = await appendRule(rulesPath, r);
                 }
+              }
+              // C6 AC-1:session = 同一份建议集进内存数组,永不写盘(新进程复弹)。
+              if (answer.kind === "session" && options.sessionRules && danger === null) {
+                options.sessionRules.push(...writable);
               }
             }
           }
@@ -283,6 +315,11 @@ export async function* runLoop(
     }
     // 继续 next turn(模型收 toolResult 后决定停或续)
   }
+}
+
+// C6 AC-2:规则行格式 = `<tool>  <prefix>`(双空格)。弹面与落盘解析共用,一处定义。
+function fmtRule(r: Rule): string {
+  return `${r.tool}  ${r.prefix}`;
 }
 
 function snapshot(m: AssistantMessage): AssistantMessage {

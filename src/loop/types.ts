@@ -3,6 +3,7 @@
 // AgentEvent 10 类照抄 pi `packages/agent/src/types.ts:428-443`(实测,非 12)。
 import type { ContentBlock, TextBlock } from "../blocks.ts";
 import type { Tool } from "../tools/tool.ts";
+import type { Rule } from "./rules.ts";
 
 // ---- messages ----
 export type StopReason = "stop" | "tool_use" | "length" | "error" | "aborted";
@@ -42,9 +43,17 @@ export interface LoopContext {
   // 卡 4:逃生舱 unknown[] 敲实为注册表类型 —— cli 不再预映射,方言自从 Tool 映射 wire(单一表示)。
   tools?: Tool[];
 }
+// C6(docs/ISSUES.md)四档确认答案。reason 仅 no 有意义:进 toolResult 回喂模型,
+// 支撑"拒绝带反馈重试"。session = 内存规则(同匹配器同短路点),生命周期 = 调用方持有
+// 的 sessionRules 数组,不落盘 → 新进程复弹;"手删即撤销""禁一键全允许"两条不变式不受影响。
+export type ConfirmAnswer = {
+  kind: "yes" | "session" | "always" | "no";
+  reason?: string;
+};
+
 export interface RunLoopOptions {
   // H1:裸 readline 的 question 天然异步 → 允许返回 Promise(loop 侧 await;同步实现照旧兼容)。
-  confirm?: (prompt: string) => "yes" | "always" | "no" | Promise<"yes" | "always" | "no">;
+  confirm?: (prompt: string) => ConfirmAnswer | Promise<ConfirmAnswer>;
   // T2 AC-T2-7/8:rules.json 路径(D4:测试注入临时目录,生产 = <cwd>/rules.json)。
   // 缺省 = 不读写 rules(always 退化为一次性 yes)。
   rulesPath?: string;
@@ -57,6 +66,10 @@ export interface RunLoopOptions {
   // C7(docs/ISSUES.md):--auto-accept-edits。开 → matchKind:"path" 工具且目标在 cwd 内
   // 直通免弹(bash 不受影响;C5 黑名单与 cwd 外照常拦)。缺省 = 现行为零变化。
   autoAcceptEdits?: boolean;
+  // C6 AC-1:session 档规则容器。调用方(cli 每进程)持有数组 → 跨多次 runLoop 存活 =
+  // "同 run 免弹";换新数组 = 新 run 复弹。loop 只在答 session 时 push,永不写盘。
+  // 缺省 = 无 session 档语义(always 落盘路径不受影响)。
+  sessionRules?: Rule[];
 }
 
 // ---- AgentEvent 10 类(照抄 pi;agent_end.reason? 为 mini maxTurns 偏离的最小扩)----

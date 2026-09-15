@@ -3,8 +3,9 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { runLoop } from "../loop/run-loop.ts";
-import type { AgentEvent, LoopContext, ToolResultMessage } from "../loop/types.ts";
+import type { AgentEvent, ConfirmAnswer, LoopContext, ToolResultMessage } from "../loop/types.ts";
 import type { ProviderEvent, StreamFn } from "../stream/protocol.ts";
+import type { Rule } from "../loop/rules.ts";
 import { readTool } from "./read.ts";
 import { editTool } from "./edit.ts";
 import { writeTool } from "./write.ts";
@@ -48,13 +49,23 @@ function twoTurnStream(turn1: AsyncIterable<ProviderEvent>, text = "recovered"):
     })();
   };
 }
-function confirmSpy(answer: "yes" | "always" | "no") {
+function confirmSpy(answer: ConfirmAnswer["kind"], reason?: string) {
   const prompts: string[] = [];
   const confirm = (prompt: string) => {
     prompts.push(prompt);
-    return answer;
+    return { kind: answer, ...(reason !== undefined && { reason }) } as ConfirmAnswer;
   };
   return { prompts, confirm };
+}
+
+// C6 AC-2/AC-4:抽弹面规则行 —— 行内式(`…规则: bash  git commit:*`)与列表式(`    bash  git diff:*`)
+// 同一条正则:`<tool>` + 两个空格 + 非空 prefix。首行 `Execute: bash({…` 无双空格,不误匹配。
+function printedRules(prompt: string): string[] {
+  return prompt
+    .split("\n")
+    .map((l) => /\b(bash|write|edit)\s{2}(\S.*\S)$/.exec(l.trimEnd()))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => `${m[1]}  ${m[2]}`);
 }
 
 describe("T1 注册表分发:toolCall→read→toolResult 整链", () => {
@@ -742,5 +753,161 @@ describe("C7 端到端:auto-accept-edits", () => {
     );
     expect(s.prompts).toHaveLength(1);
     expect(s.prompts[0]).toContain("*.env 密钥文件");
+  });
+});
+
+// C6 四档弹窗(AC-1):session 档 = 内存规则,与持久规则同匹配器同短路点,仅生命周期不同。
+// 判据:同 run(同一 sessionRules 数组)重跑免弹;rules.json 零新条目 = 不落盘。
+describe("C6 AC-1:session 档 —— 同 run 免弹、不落盘", () => {
+  it("第 1 次答 session → 执行 + 内存规则含 git push:* + rules.json 无条目;同 sessionRules 第 2 次免弹", async () => {
+    const rulesPath = join(dir, "rules-c6a.json");
+    const calls = { n: 0 };
+    const sessionRules: Rule[] = [];
+
+    const s1 = confirmSpy("session");
+    await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("q1", "bash", { command: "git push" })),
+        [shellFake(calls)],
+        { messages: [{ role: "user", content: "x" }] },
+        { confirm: s1.confirm, rulesPath, sessionRules },
+      ),
+    );
+    expect(s1.prompts).toHaveLength(1);
+    expect(calls.n).toBe(1); // session 当次照常执行
+    expect(sessionRules).toEqual([{ tool: "bash", prefix: "git push:*" }]);
+    expect(await readFile(rulesPath, "utf8").catch(() => "[]")).toBe("[]");
+
+    // 第 2 趟应答故意 no —— 若还弹则 run 被拦、calls 不加 = 红。
+    const s2 = confirmSpy("no");
+    await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("q2", "bash", { command: "git push origin main" })),
+        [shellFake(calls)],
+        { messages: [{ role: "user", content: "x" }] },
+        { confirm: s2.confirm, rulesPath, sessionRules },
+      ),
+    );
+    expect(s2.prompts).toHaveLength(0);
+    expect(calls.n).toBe(2);
+  });
+
+  // AC-1 另一半:session 生命周期止于本 run —— 换新 sessionRules(= 新进程)必复弹。
+  it("session 落内存后新 run(新数组)恢复弹;同规则若曾 always 落盘则不弹(对照组)", async () => {
+    const rulesPath = join(dir, "rules-c6b.json");
+    const calls = { n: 0 };
+
+    // 第 1 趟:session
+    const s1 = confirmSpy("session");
+    await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("n1", "bash", { command: "git push" })),
+        [shellFake(calls)],
+        { messages: [{ role: "user", content: "x" }] },
+        { confirm: s1.confirm, rulesPath, sessionRules: [] },
+      ),
+    );
+    expect(s1.prompts).toHaveLength(1);
+
+    // 第 2 趟:新数组(新 run),应答 no → 必弹且被拦
+    const s2 = confirmSpy("no");
+    await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("n2", "bash", { command: "git push" })),
+        [shellFake(calls)],
+        { messages: [{ role: "user", content: "x" }] },
+        { confirm: s2.confirm, rulesPath, sessionRules: [] },
+      ),
+    );
+    expect(s2.prompts).toHaveLength(1); // session 未泄漏到下个 run
+    expect(calls.n).toBe(1); // 弹后答 no → 未执行
+    expect(await readFile(rulesPath, "utf8").catch(() => "[]")).toBe("[]"); // 全程零落盘
+  });
+});
+
+// C6 AC-2:弹窗印出的规则文案 == rules.json 实际落盘内容,逐字一致(解析断言,非快照)。
+// 用户点的就是他批的 —— 印面前 = 落盘面,由同一份建议规则数组渲染,禁止两套字符串。
+describe("C6 AC-2:always 印面 == 落盘面", () => {
+  it("单段命令 → 弹窗含规则行 `bash  git commit:*`,与落盘 JSON 逐字一致", async () => {
+    const rulesPath = join(dir, "rules-c6c.json");
+    const calls = { n: 0 };
+    const s = confirmSpy("always");
+    await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("a1", "bash", { command: "git commit -m x" })),
+        [shellFake(calls)],
+        { messages: [{ role: "user", content: "x" }] },
+        { confirm: s.confirm, rulesPath },
+      ),
+    );
+    expect(s.prompts).toHaveLength(1);
+    const disk = JSON.parse(await readFile(rulesPath, "utf8")) as Rule[];
+    expect(printedRules(s.prompts[0] ?? "")).toEqual(disk.map((r) => `${r.tool}  ${r.prefix}`));
+    expect(printedRules(s.prompts[0] ?? "")).toEqual(["bash  git commit:*"]);
+  });
+
+  // 弹面键位行与 mapConfirm 必须同档:此处钉住印面(测锚),输入流吞行仍归 C8 W 剧本人工跑。
+  it("弹面第二行 = 四档键位(1 once / 2 session / 3 always / 4 No)", async () => {
+    const calls = { n: 0 };
+    const s = confirmSpy("yes");
+    await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("k1", "bash", { command: "git push" })),
+        [shellFake(calls)],
+        { messages: [{ role: "user", content: "x" }] },
+        { confirm: s.confirm, rulesPath: join(dir, "rules-c6f.json") },
+      ),
+    );
+    expect(s.prompts[0]?.split("\n")[1]).toBe(
+      "❯ 1 Yes (once)  2 Yes + session  3 Yes + always  4 No",
+    );
+  });
+});
+
+// C6 AC-3:拒 + 理由 → 理由进 toolResult 回喂模型(支撑"拒绝带反馈重试")。
+describe("C6 AC-3:no + 理由回喂", () => {
+  it("答 4 带理由 → toolResult isError 且文本含理由原文", async () => {
+    const calls = { n: 0 };
+    const s = confirmSpy("no", "这条会覆盖远端历史");
+    const events = await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("r1", "bash", { command: "git push" })),
+        [shellFake(calls)],
+        { messages: [{ role: "user", content: "x" }] },
+        { confirm: s.confirm, rulesPath: join(dir, "rules-c6d.json") },
+      ),
+    );
+    const end = events.find((e) => e.type === "tool_execution_end");
+    expect(end?.type).toBe("tool_execution_end");
+    if (end?.type !== "tool_execution_end") return;
+    expect(end.isError).toBe(true);
+    expect((end.result as { content: { text: string }[] }).content[0]!.text).toContain(
+      "这条会覆盖远端历史",
+    );
+    expect(calls.n).toBe(0); // 拒 = 不执行
+  });
+});
+
+// C6 AC-4:复合命令 always 建议 = 每段一条,打印数 == 落盘数(同源一份数组渲染,不可能漂移)。
+describe("C6 AC-4:复合命令逐段建议", () => {
+  it("复合命令 `git status -sb && git diff HEAD` 答 always → 弹面 2 条规则行 == 落盘 2 条", async () => {
+    const rulesPath = join(dir, "rules-c6e.json");
+    const calls = { n: 0 };
+    const s = confirmSpy("always");
+    await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("m1", "bash", { command: "git status -sb && git diff HEAD" })),
+        [shellFake(calls)],
+        { messages: [{ role: "user", content: "x" }] },
+        { confirm: s.confirm, rulesPath },
+      ),
+    );
+    const disk = JSON.parse(await readFile(rulesPath, "utf8")) as Rule[];
+    expect(disk).toEqual([
+      { tool: "bash", prefix: "git status:*" },
+      { tool: "bash", prefix: "git diff:*" },
+    ]);
+    expect(printedRules(s.prompts[0] ?? "")).toEqual(disk.map((r) => `${r.tool}  ${r.prefix}`));
+    expect(s.prompts[0]).toContain("将落盘 2 条规则");
   });
 });

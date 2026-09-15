@@ -3,7 +3,7 @@
 //   createPlainIO —— 非 TTY/管道回落:H1 原裸 readline + 增量 renderer,行为与旧 cli 一致。
 // loop/stream/memory 零改动;确认门/中断/落盘裁决仍全在 loop 与 cli 既有缝里。
 import { createInterface } from "node:readline";
-import type { AgentEvent, AgentMessage } from "../loop/types.ts";
+import type { AgentEvent, AgentMessage, ConfirmAnswer } from "../loop/types.ts";
 import { filterCommands, type SlashCommand } from "./commands.ts";
 import { createRenderer } from "./renderer.ts";
 import {
@@ -17,7 +17,8 @@ import {
   type TuiView,
 } from "./tui-view.ts";
 
-export type ConfirmAnswer = "yes" | "always" | "no";
+// C6:答案契约住 loop(单一事实源),本侧只 re-export 保 cli.ts 既有对外面。
+export type { ConfirmAnswer };
 
 export interface ChatIO {
   readonly mode: "tui" | "plain";
@@ -34,12 +35,19 @@ export interface ChatIO {
   onInterrupt(cb: () => void): void;
 }
 
-// 确认门答案映射(与旧 cli 逐字等价:1/y/yes=放行,2/always*=总是,其余=拒)。
+// C6 四档键位映射:1/y/yes=一次性、2=session、3/always*=落盘、其余=拒。
+// 旧三档的 2=always 作废(session 插位,always 顺位 3);拒时"其余皆拒"的兜底语义不变。
 export function mapConfirm(answer: string): ConfirmAnswer {
-  const a = answer.trim().toLowerCase();
-  if (a === "1" || a === "y" || a === "yes") return "yes";
-  if (a === "2" || a.startsWith("always")) return "always";
-  return "no";
+  // 档位 = 首个空白前的 token(判定用小写);理由 = 其后原文(不降大小写,中文/英文原样)。
+  const raw = answer.trim();
+  const sp = raw.search(/\s/);
+  const key = (sp < 0 ? raw : raw.slice(0, sp)).toLowerCase();
+  const rest = sp < 0 ? "" : raw.slice(sp + 1).trim();
+  if (key === "1" || key === "y" || key === "yes") return { kind: "yes" };
+  if (key === "2") return { kind: "session" };
+  if (key === "3" || key.startsWith("always")) return { kind: "always" };
+  if (key === "4" && rest !== "") return { kind: "no", reason: rest };
+  return { kind: "no" };
 }
 
 export function createTui(opts: { cwd: string; commands: readonly SlashCommand[] }): ChatIO {
@@ -231,9 +239,11 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
     },
     confirm(prompt: string) {
       return new Promise<ConfirmAnswer>((resolve) => {
+        // C6:弹面文案由 loop 一次给全(首行 warn,其余行 dim 缩进),本侧不再自造键位行。
+        const lines = prompt.split("\n");
         entries.push(
-          { kind: "warn", text: prompt },
-          { kind: "dim", text: "1 Yes / 2 Yes-always / 3 No" },
+          { kind: "warn", text: lines[0] ?? "" },
+          ...lines.slice(1).map((text) => ({ kind: "dim" as const, text })),
         );
         confirmWait = (answer: string) => {
           confirmWait = null;
@@ -323,7 +333,7 @@ export function createPlainIO(): ChatIO {
       rl.close();
     },
     ask: (label) => askLine(label ?? "> "),
-    confirm: async (prompt) => mapConfirm(await askLine(`${prompt} (1/2/3): `)),
+    confirm: async (prompt) => mapConfirm(await askLine(`${prompt}\n(1/2/3/4) ❯ `)),
     render(ev) {
       stream(ev);
     },
