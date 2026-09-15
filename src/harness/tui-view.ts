@@ -220,7 +220,29 @@ export function selectListLines(
     .flat()
     .slice(0, maxRows); // sel 组独行超预算时硬截(带首行 = sel 行,恒可见)
 }
+// ---- C17 keyIn 底条(向导独立态,照 kilo DialogPrompt):标题 / 端点指引(dim,调用方注入)/ 明文输入 ----
+// 明文不打码 = kilo 实况(屏幕暴露风险用户已知晓);空 buf → dim placeholder sk-…;超宽 fitInput 保尾(输入框同款)。
+export function connectKeyInLines(o: {
+  alias: string;
+  hint: string;
+  buf: string;
+  w: number;
+}): string[] {
+  const cur = o.buf === "" ? `${DIM}sk-…${RESET}` : fitInput(o.buf, Math.max(2, o.w - 2));
+  return [
+    `${B}输入 ${o.alias} API key${RESET}`,
+    `${DIM}${trunc(o.hint, Math.max(8, o.w))}${RESET}`,
+    `${B}>${RESET} ${cur}`,
+  ];
+}
+
 // ---- 整屏 ----
+// C17 向导层视图:pick = C16 选列复用(items 由 tui.ts 注 alias·modelId·✓);keyIn = 底条三行。
+// 活跃时压掉补全层(聊天键位全让位,AC3);行数契约同 completion 吃 height−8 预算。
+export type ConnectView =
+  | { step: "pick"; items: SelectItem[]; sel: number }
+  | { step: "keyIn"; alias: string; hint: string; buf: string };
+
 export interface TuiView {
   modelId: string;
   cwd: string;
@@ -231,15 +253,22 @@ export interface TuiView {
   width: number;
   height: number;
   completion: SelectView | null;
+  connect: ConnectView | null;
   verbose: boolean; // C11:think 全文淡显(Ctrl+O 切);live 条目不受此字段影响,恒展开
 }
 // 顶栏并入滚动区:消息变长整体向下生长,超屏后顶栏随内容滑出("自动向上移动"手感),输入框钉底。
 // 行数 ≤ height(内容留尾 + 空 + 3 框),超界终端滚动会撕框。
 export function renderView(v: TuiView): string {
   // 弹层封顶 = height 减去定盘(顶 4 + 空 1 + 框 3 + body 至少 1);无匹配行同吃此预算(C16 AC-4)。
-  const comp = v.completion
-    ? selectListLines(v.completion.items, v.width, v.completion.sel, Math.max(0, v.height - 8))
-    : [];
+  // C17:向导层活跃时占同一弹层位(pick 走 selectListLines 逐字节 C16 契约,keyIn 三行底条;极矮终端截行保契约)。
+  const budget = Math.max(0, v.height - 8);
+  const comp = v.connect
+    ? v.connect.step === "pick"
+      ? selectListLines(v.connect.items, v.width, v.connect.sel, budget)
+      : connectKeyInLines({ ...v.connect, w: v.width }).slice(0, budget)
+    : v.completion
+      ? selectListLines(v.completion.items, v.width, v.completion.sel, budget)
+      : [];
   const content = [
     ...headerLines(v.modelId, v.cwd, v.width),
     ...entriesToLines(v.entries, v.width, v.verbose),

@@ -1,7 +1,9 @@
 // P2 纯渲染层自动测试(只测 tui-view 这层纯函数;raw-mode 驱动 tui.ts 人工验,同 DECISIONS W2 精神)。
 // 断言全用 \u 码点字符串 —— 源码若生成时字符漂移(或同漂骗测),码点对不上必红,即漂移探测器。
 import { describe, expect, it } from "vitest";
+import { DIM } from "./ansi.ts";
 import {
+  connectKeyInLines,
   entriesFromMessages,
   entriesToLines,
   entryLines,
@@ -40,6 +42,7 @@ function view(partial: Partial<TuiView>): TuiView {
     width: 60,
     height: 20,
     completion: null,
+    connect: null,
     verbose: false,
     ...partial,
   };
@@ -466,5 +469,31 @@ describe("C16 selectListLines 选中特效", () => {
     expect(plain([empty[19]!])[0]!.trim()).toBe("无匹配");
     expect(empty[0]).toContain("E45");
     expect(empty.join("")).not.toContain(INV); // 高亮位不指任何行
+  });
+});
+
+// ---- C17 keyIn 帧底条:标题 / 端点指引(dim,cli 注入) / 明文输入(空 → sk-… placeholder) ----
+describe("C17 connectKeyInLines keyIn 底条", () => {
+  const INV = "\x1b[7m";
+  const mk = (buf: string): string[] =>
+    connectKeyInLines({ alias: "qwen", hint: "https://api.x/v1 · 控制台获取", buf, w: 40 });
+
+  it("三行定长;标题含 alias;指引行 = hint 原文 dim", () => {
+    const ls = mk("");
+    expect(ls).toHaveLength(3);
+    expect(plain(ls)[0]).toBe("输入 qwen API key");
+    expect(plain(ls)[1]).toBe("https://api.x/v1 · 控制台获取");
+    expect(ls[1]).toContain(DIM);
+    expect(ls.join("")).not.toContain(INV); // C16 终档:零反色
+  });
+
+  it("buf 空 → placeholder sk-…(dim);非空 → 明文照打(kilo 不打码);超宽保尾弃头", () => {
+    const empty = plain(mk(""))[2]!;
+    expect(empty).toContain("sk-…");
+    expect(mk("")[2]).toContain(DIM);
+    expect(plain(mk("sk-a1"))[2]).toBe("> sk-a1");
+    const long = mk("k".repeat(60));
+    expect(vw(plain(long)[2]!)).toBeLessThanOrEqual(40);
+    expect(plain(long)[2]).toMatch(/^> …k+$/); // fitInput 保尾语义
   });
 });

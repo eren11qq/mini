@@ -22,7 +22,7 @@ import { localDate } from "../util/time.ts";
 import { parseArgs } from "./args.ts";
 import { loadKeys, resolveKey, saveKey } from "./keys.ts";
 import { findProjectContext } from "./project-context.ts";
-import { resolveProvider } from "./providers.ts";
+import { PROVIDERS, resolveProvider } from "./providers.ts";
 import { resolveModel } from "./resolve-model.ts";
 import { buildSystemPrompt } from "./system-prompt.ts";
 import { matchCommand, type SlashCommand } from "./commands.ts";
@@ -216,6 +216,26 @@ async function main(): Promise<void> {
   COMMANDS.push(
     { name: "compact", description: "手动压缩上下文", run: () => runCompact(true) },
     { name: "model", description: "切换厂商模型", usage: "<alias> [api-key]", run: switchModel },
+    // C17 /connect:向导数据在此组装(表驱动,渲染层零业务),effect 消费 = saveKey → switchModel
+    // 同款校验 + 热切(resolveKey 现读盘 = 落盘即生效,单进程无 kilo 的 dispose/bootstrap)。
+    {
+      name: "connect",
+      description: "配置厂商 API key",
+      run: async () => {
+        const store = await loadKeys(KEYS_PATH);
+        const vendors = Object.entries(PROVIDERS).map(([a, p]) => ({
+          alias: a,
+          modelId: p.models[0]!.id,
+          configured:
+            resolveKey({ alias: a, keyEnv: p.key_env, env: process.env, store }) !== undefined,
+          hint: `${p.base_url} · key 在厂商控制台获取`,
+        }));
+        const got = await io.connectPrompt(vendors);
+        if (!got) return; // Esc/未知/空 = 零落盘(Esc 任意步取消语义)
+        await saveKey(KEYS_PATH, got.alias, got.key);
+        await switchModel(got.alias);
+      },
+    },
   );
 
   if (io.mode === "plain") io.note(`mini · ${alias} (${provider.models[0]!.id}) · ${cwd}`);

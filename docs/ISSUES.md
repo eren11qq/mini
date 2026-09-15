@@ -349,10 +349,12 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 
 ### Acceptance criteria
 
-- [ ] reducer 迁移表驱动测:pick 环绕/进 keyIn/⏎空不落盘/⏎非空发 save+switch 意图/Esc 两步语义
-- [ ] 离线 e2e(隔离 HOME):键序走完 `qwen` 落 keys.json(0600)且顶栏换 id;Esc 全程 → 文件不生成
-- [ ] 弹层样式逐字节走 C16 契约(反色带/●/✓);层开时聊天键位全部让位向导
-- [ ] `/connect` 进 C9 命令注册表(补全可见),plain 模式回落后走既有逐行 ask 通道不弹层(提示用 `/model <alias>` 切已配厂商)
+- [x] reducer 迁移表驱动测:pick 环绕/进 keyIn/⏎空不落盘/⏎非空发 save+switch 意图/Esc 两步语义 —— `connect-flow.test.ts` 七测钉死;submit/cancel 是 effect,落盘/热切全在 cli 消费侧
+- [x] 离线 e2e(隔离 HOME):键序走完 `qwen` 落 keys.json(0600)且顶栏换 id;Esc 全程 → 文件不生成 —— tmux PTY 四跑:pick ● Down×2 → qwen keyIn → 空⏎等待 → 明文 `sk-tui-1` → `{"qwen":"sk-tui-1"}` 600 + 「已切换 → qwen (qwen3.8-flash)」;Esc@pick 与 Esc@keyIn 打码中途均零落盘。plain 管道三跑同绿(慢喂防 EOF race,C15 先例):落盘+自动切 / 空 key 取消 / 未知厂商拒绝
+- [x] 弹层样式逐字节走 C16 契约(反色带/●/✓);层开时聊天键位全部让位向导 —— pick = `selectListLines` 原机零新码(● 位标、✓ gutter 顶格、● 顶掉 mark、desc 列对齐,D capture 取证);向导活跃时 stdin 键全数进 reducer,聊天输入/弹层零触达
+- [x] `/connect` 进 C9 命令注册表(补全可见),plain 模式回落后走既有逐行 ask 通道不弹层 —— plain = 逐行 ask(列厂商→alias→key)收齐交 cli 落盘+热切(与 TUI 同果,用户裁决 2026-09-16);TUI 提交 = 两连 ⏎(补全收起→提交,C9 既裁零变)
+- [ ] 真机抽验(用户验后勾):版式手感 + ✓ 已配标记 + Esc 热退
+- 注(2026-09-16 TDD 落地):e2e 揪出**连发吞键**真 bug —— tmux 连发/长按 repeat 把 `"\x1b[B\x1b[B"` 并成单 data 事件,整串全等匹配全吞;向导支改 token 流解析(CSI=\x1b[. 整串 + 可打印逐字符,`no-control-regex` 注释走 tui-view 同款)。chat 支同弱点系既有(C16 W2 缝外)未动,卡外发现记账。`ensureKey` warn 文案仍指 `/model <alias> <key>` = C18 收口位,零越界。
 
 ---
 

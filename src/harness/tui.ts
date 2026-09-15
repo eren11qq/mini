@@ -5,6 +5,7 @@
 import { createInterface } from "node:readline";
 import type { AgentEvent, AgentMessage, ConfirmAnswer } from "../loop/types.ts";
 import { DIM, RESET } from "./ansi.ts";
+import { reduceConnect, type ConnectEvent, type ConnectState } from "./connect-flow.ts";
 import { filterCommands, type SlashCommand } from "./commands.ts";
 import { createRenderer } from "./renderer.ts";
 import {
@@ -14,6 +15,7 @@ import {
   previewResult,
   renderView,
   vw,
+  type ConnectView,
   type Entry,
   type SelectView,
   type TuiView,
@@ -22,6 +24,14 @@ import {
 // C6:答案契约住 loop(单一事实源),本侧只 re-export 保 cli.ts 既有对外面。
 export type { ConfirmAnswer };
 
+// C17 向导数据行:cli 组装(alias·modelId·已配·端点指引),reducer/渲染层只搬运(同 C16「数据由调用方注入」)。
+export interface ConnectVendor {
+  alias: string;
+  modelId: string;
+  configured: boolean;
+  hint: string;
+}
+
 export interface ChatIO {
   readonly mode: "tui" | "plain";
   start(): void;
@@ -29,6 +39,8 @@ export interface ChatIO {
   /** 下一行输入。label 仅 plain 模式当提示符;tui 回显由 user 条目天然完成。 */
   ask(label?: string): Promise<string>;
   confirm(prompt: string): Promise<ConfirmAnswer>;
+  /** C17 /connect 向导:TUI 弹层三态等待(⏎→{alias,key},Esc/取消→null);plain = 逐行 ask 回落。 */
+  connectPrompt(vendors: readonly ConnectVendor[]): Promise<{ alias: string; key: string } | null>;
   render(event: AgentEvent): void;
   note(line: string): void;
   warn(line: string): void;
@@ -67,6 +79,10 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
   let verbose = false; // C11:Ctrl+O(\x0f)切 think 全文/折行;纯视图态,不落盘
   let askWait: ((s: string) => void) | null = null;
   let confirmWait: ((s: string) => void) | null = null;
+  // C17 第三等待态:向导活跃时聊天键位全部让位(AC3);⏎/Esc 语义裁决全在 connect-flow reducer。
+  let connectState: ConnectState = { step: "idle" };
+  let connectVendors: readonly ConnectVendor[] = [];
+  let connectResolve: ((r: { alias: string; key: string } | null) => void) | null = null;
   const pending: string[] = []; // busy 期按 ⏎ = 排队,本轮 main 回到 ask 立即领走
   let interrupt: (() => void) | null = null;
   // C9 补全弹层 = 纯视图态:确认等待中/Esc 收起/非 "/" 行首 → 不出弹层;提交语义零改动。
@@ -97,6 +113,32 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
       sel: items.length === 0 ? -1 : Math.min(compSel, items.length - 1),
     };
   };
+  const dispatchConnect = (ev: ConnectEvent): void => {
+    const r = reduceConnect(connectState, ev);
+    connectState = r.state;
+    if (r.effect && connectResolve) {
+      const f = connectResolve;
+      connectResolve = null;
+      f(r.effect.type === "submit" ? { alias: r.effect.alias, key: r.effect.key } : null);
+    }
+  };
+  const connectView = (): ConnectView | null => {
+    if (connectState.step === "pick")
+      return {
+        step: "pick",
+        sel: connectState.sel,
+        items: connectState.aliases.map((a) => {
+          const v = connectVendors.find((x) => x.alias === a);
+          return { title: a, desc: v?.modelId ?? "", mark: v?.configured ? "✓" : undefined };
+        }),
+      };
+    if (connectState.step === "keyIn") {
+      const alias = connectState.alias;
+      const v = connectVendors.find((x) => x.alias === alias);
+      return { step: "keyIn", alias, hint: v?.hint ?? "", buf: connectState.buf };
+    }
+    return null;
+  };
 
   const restore = (): void => {
     process.stdout.write("\x1b[?25h\x1b[0m");
@@ -123,7 +165,8 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
         busy,
         width,
         height,
-        completion: compView(),
+        completion: connectState.step === "idle" ? compView() : null,
+        connect: connectView(),
         verbose,
       };
       // 零 \x1b[2J:Windows Terminal 把 2J 解释成"整屏滚进 scrollback 再清",每帧存档 = 连续叠框。
@@ -174,6 +217,26 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
       process.stdout.on("resize", requestDraw);
       process.stdin.on("data", (buf) => {
         const s = buf.toString("utf8");
+        if (connectState.step !== "idle") {
+          // C17:向导活跃 = 键全进 reducer。Ctrl+C = 只 cancel 向导不退出(cli 此刻 await 在命令里,
+          // 走下方旧支会 interrupt==null → process.exit)。
+          // 键流按 token 解析(真机证据 2026-09-16:tmux 连发/长按 repeat 把 "\x1b[B\x1b[B" 并成单个
+          // data 事件,整串全等会全吞);CSI 序列 = \x1b[.,整串识别,其余 \x1b 前缀转义吞掉,可打印逐字符。
+          if (s === "\x03") dispatchConnect({ type: "esc" });
+          else
+            // eslint-disable-next-line no-control-regex -- \x1b 前缀故意的,同 tui-view strip/CELL 规约
+            for (const t of s.match(/\x1b\[.[\x30-\x3f]*|[\s\S]/g) ?? []) {
+              if (t === "\x1b[A") dispatchConnect({ type: "up" });
+              else if (t === "\x1b[B") dispatchConnect({ type: "down" });
+              else if (t === "\r" || t === "\n") dispatchConnect({ type: "enter" });
+              else if (t === "\x1b") dispatchConnect({ type: "esc" });
+              else if (t === "\x7f" || t === "\b") dispatchConnect({ type: "backspace" });
+              else if (!t.startsWith("\x1b") && (t.codePointAt(0) ?? 0) >= 0x20)
+                dispatchConnect({ type: "char", ch: t });
+            }
+          requestDraw();
+          return;
+        }
         if (s === "\x03") {
           // Ctrl+C:有挂起确认/提问先按"否/空"解掉(防 loop await 卡死),再交 cb——
           // busy 时 cli 的 cb = abort 当前轮(语义在 loop),空转时 = 退出。
@@ -267,6 +330,18 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
         requestDraw();
       });
     },
+    connectPrompt(vendors: readonly ConnectVendor[]) {
+      return new Promise<{ alias: string; key: string } | null>((resolve) => {
+        // cli REPL 串行调用 = 进入时必 idle(open 非 idle 被 reducer 忽略,不在此防)。
+        connectVendors = vendors;
+        connectResolve = resolve;
+        connectState = reduceConnect(connectState, {
+          type: "open",
+          aliases: vendors.map((v) => v.alias),
+        }).state;
+        requestDraw();
+      });
+    },
     render(ev: AgentEvent) {
       switch (ev.type) {
         case "agent_start":
@@ -349,6 +424,25 @@ export function createPlainIO(): ChatIO {
     },
     ask: (label) => askLine(label ?? "> "),
     confirm: async (prompt) => mapConfirm(await askLine(`${prompt}\n(1/2/3/4) ❯ `)),
+    // C17 AC4:plain 回落 = 既有逐行 ask 通道,不弹层;收齐 {alias,key} 交 cli 落盘+热切(与 TUI 同果)。
+    async connectPrompt(vendors: readonly ConnectVendor[]) {
+      process.stdout.write("配置 API key(厂商):\n");
+      for (const v of vendors)
+        process.stdout.write(`  ${v.alias} (${v.modelId})${v.configured ? " ✓已配" : ""}\n`);
+      const alias = (await askLine("厂商 alias: ")).trim();
+      if (!vendors.some((v) => v.alias === alias)) {
+        process.stdout.write(
+          `未知厂商:${alias}(可选:${vendors.map((v) => v.alias).join(" / ")})\n`,
+        );
+        return null;
+      }
+      const key = (await askLine(`输入 ${alias} API key(明文,回车落盘): `)).trim();
+      if (key === "") {
+        process.stdout.write("未输入,已取消。\n");
+        return null;
+      }
+      return { alias, key };
+    },
     render(ev) {
       stream(ev);
     },
