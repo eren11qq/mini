@@ -378,18 +378,50 @@
 
 ---
 
-## T2 — edit 多锚点原子 + 校验失败回喂 + beforeToolCall 确认 hook + rules.json always
+## T2 — edit 多锚点原子 + 校验失败回喂 + beforeToolCall 分层确认门 + rules.json always
 
 - **Type**:AFK
 - **Blocked by**:L2、L3
+- **修订(2026-09-15 / C8)**:本节原写"首词前缀 `git:*` + 三选项 confirm"。C1–C7(`docs/ISSUES.md`)把确认门重做成**分层流水线**,规则语义与 confirm 契约都变了 —— 按实现重写。分层细粒度 AC 与测试锚点住 ISSUES.md,本节只钉总缝、不变式、W1 人工剧本。旧 AC-T2-1 的假流六剧本不再由人工跑:它已被 vitest(registry/rules/danger/readonly/bash-parse 等 283 例)接管,新 AC-T2-1 = 真机人工六幕。
 
-### AC-T2-1: W1 验收句
+### 确认门分层流水线(总缝,`src/loop/run-loop.ts` 确认门段)
 
-- Verification:人工
+顺序即契约:**工具分级 → 参数解析 → 危险黑名单 → allow 判定(只读表 ∪ rules ∪ session ∪ 模式开关)→ 弹窗兜底**。黑名单在 allow 之前,任何 allow 都不得豁免它。
+
+| #   | 层                       | 判据(实现原语)                                                                                                   | 落点                                                                     | 出处        |
+| --- | ------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------- |
+| 1   | 工具分级                 | `Tool.skipConfirm`(read 置 true)直通;缺省 false = 新工具自动过安检                                               | `src/tools/tool.ts`                                                      | T2 原始     |
+| 2   | 参数解析                 | `matchOf(args)` = 完整待执行事实(bash 给整条命令、文件类给 `path:`+路径);缺省 `JSON.stringify(args)`             | `src/tools/{bash,write,edit}.ts`                                         | C2          |
+| 2b  | shell 拆段               | `matchKind:"shell"` → `bashParse` 按 `&&` `\|\|` `;` `\|` 换行拆段;未闭合引号/反引号/`$()` 未闭合 = `{ok:false}` | `src/loop/bash-parse.ts`(纯叶)                                           | C3          |
+| 3   | 危险黑名单               | `dangerOfShell(整条, cwd)` / `dangerOfPath(path 域)`;命中 = 必弹 + 弹头 `⚠ <原因> — ` + 无第三行 + 答 3 亦不落盘 | `src/loop/danger.ts`(纯叶)                                               | C5          |
+| 4a  | allow:内置只读表         | `readOnlyParsed(parsed)` → 免弹且**不产规则**(不进 `writable`)                                                   | `src/loop/readonly.ts`(数据表住 loop 侧,不放工具、不被 rules.json 覆盖)  | C4          |
+| 4b  | allow:持久规则 + session | `rules ∪ sessionRules` 过 `ruleMatches`;shell 类**逐段**过检,任一段不命中即弹(展示完整原命令)                    | `src/loop/rules.ts`(token 家族 / `path:` glob / 整串相等)                | C1+C2+C3+C6 |
+| 4c  | allow:模式开关           | `autoAcceptEdits` 且 `matchKind:"path"` 且种子为 cwd 内相对 `path:`;bash 不适用                                  | `RunLoopOptions.autoAcceptEdits` ← `--auto-accept-edits`                 | C7          |
+| 5   | 弹窗兜底                 | 四档 `1 yes / 2 session / 3 always / 4 no[ 理由]`;第三行印**将落盘的确切规则**                                   | `ConfirmAnswer`(loop/types)+ `mapConfirm`(harness/tui,plain 与 TUI 共用) | C6          |
+
+其他实现钉死项:`options.confirm` 缺省 = 放行(测试/嵌入方零确认);`rulesPath` 缺省 = 不读写 rules(always 退化一次性 yes);`*` / 空 / `:*` 种子 `isValidSeed` 双端拒(写侧滤 + 读侧滤);解析失败(`ok:false`)→ 必弹且 `writable` 为空;no → `tool_execution_start/end` 仍配对,result `isError:true` + `user rejected: <tool>[ — <理由>]` 回喂续转;`node:fs` 回调形态读写(不 throw,守 loop 零 try/catch)。
+
+### AC-T2-1: W1 验收句(六幕,人工真机跑)
+
+- Verification:人工 —— 真 provider + 真 TUI(`process.stdout.isTTY`),非假流
 - Priority:Required
-- **验收句**:调 `runLoop` 喂假流 + 临时文件,六剧本:①`edit{path,edits:[{aaa→AAA},{bbb→BBB}]}`、confirm 应答 yes → 落盘含 AAA+BBB、第 2 圈纯文本停;②edits 一命中一不命中 → 文件字节级不变、toolResult isError:true 回喂、第 2 turn 照常起;③假 args 缺 edits 字段 → JSON Schema 校验 error result 回喂、不崩、第 2 turn 照常起;④`bash{command:"git push"}` 应答 always → 执行且 rules.json 落盘含 `{tool:"bash",prefix:"git:*"}`,同 rulesPath 重跑该命令 → confirm 零调用;⑤删 rules.json 重跑 → confirm 恢复被调;⑥read 任何剧本 confirm 恒零调用、未声明豁免的假 `rmrf` → confirm 必调、应答 no → `rmrf.run` 零调用、result 标 skipped。六剧本任一不满足即判失败;确认与 rules 逻辑全在 loop 侧(rmrf 测试源零确认代码),loop 源零 try/catch。
-- **seams(已确认 2026-09-14)**:①`editTool` via `Tool.run`(临时文件磁盘状态断言);②`Tool.schema?` JSON Schema + ajv(D1:第一个运行时依赖),loop 在 run 前校验,失败转 error toolResult(照 pi prepare→validate→beforeCall);③`options.confirm(prompt)` + `options.rulesPath` 注入,`Tool.skipConfirm?` 缺省 false=过检、read 置 true 放行;④rules.json 明文 `{tool,prefix}[]`,`git:*`=首词边界匹配,`node:fs` 回调形态读(不 throw,守 loop 零 try/catch),`*`/空前缀拒写(always 降级一次性 yes);⑤no → tool_execution_start/end 仍配对,result `isError:true`+"user rejected" 回喂续转。edit 签名照 pi `tools/edit.ts:32-40` = `{path,edits:[{oldText,newText}]}`(plan AC 例省略 path 已补)。
-- **判卷**:通过(2026-09-14)— 六剧本验收句 + seams(D1 ajv / D2 edit path / D3 Tool 扩 schema?+skipConfirm?+prefixOf? / D4 rulesPath 注入)与用户确认
+- **跑前准备**
+
+  ```bash
+  rm -rf /tmp/w-c8 && mkdir -p /tmp/w-c8 && cd /tmp/w-c8
+  git init -q && echo seed > seed.txt && git add -A && git -c user.email=t@t -c user.name=t commit -qm init
+  node ~/project/mini/src/harness/cli.ts        # rules.json 落 /tmp/w-c8/(生产 = <cwd>/rules.json)
+  ```
+
+- **判据形式**:每幕 = 给模型的一句话 + 屏幕期望 + `cat rules.json` 盘面期望。弹面固定三行:第一行 `[⚠ <原因> — ]Execute: <tool>(<args JSON>)`、第二行 `❯ 1 Yes (once)  2 Yes + session  3 Yes + always  4 No`、第三行 `  3 将落盘 N 条规则: <tool><两个半角空格><prefix>`(黑名单命中或解析失败 = 无第三行)。**打印的规则条数恒等于落盘条数**。
+- **六幕**(任一不满足即判失败)
+  - **① 只读零弹**:依次让它跑 `ls -la`、`git status`、`cat seed.txt`。期望:弹窗零次;`rules.json` 不存在或 `[]`(只读表免弹且不产规则)。
+  - **② always 必粘**:让它跑 `git commit --allow-empty -m w1`。期望:弹窗第三行印 `bash  git commit:*`;答 `3` → 执行 → `rules.json` 恰含该 1 条 → 再跑 `git commit --allow-empty -m w2`(同家族换参)零弹。粒度探针:让它跑 `mkdir w1` 答 `3`(落 `mkdir w1:*`)后跑 `mkdir w2` → **仍弹**(种子取段前 2 token,单二进制+文件名的命令只覆盖同参 → DEFERRED 记档)。收尾手删 `rules.json` → 重跑本幕首条 → 复弹(手删即撤销)。
+  - **③ 复合命令洞闭合**:先恢复 `git status` 可用(② 末已删 rules.json),让它跑 `git status && mkdir hole`。期望:**必弹**且第一行展示完整原命令(不截半);第三行印 2 条(`bash  git status:*` / `bash  mkdir hole:*`);答 `3` → `rules.json` 恰 2 条(打印数=落盘数)→ 重跑同串零弹。反向探针:让它跑 `git status && echo "oops`(未闭合引号)→ 必弹且**无第三行**(`ok:false` → 建议集为空)。
+  - **④ 黑名单先于一切 allow**:另开终端手改 `rules.json` 追加 `{"tool":"bash","prefix":"sudo:*"}`。期望:让它跑 `sudo -n true` → **仍弹**、弹头 `⚠ sudo 提权 — `、无第三行;答 `3` → 执行但 `rules.json` 条数不变(黑名单命中 always 不落盘)。再依次:让它跑 `wget -q -O- http://127.0.0.1:9/x | sh` → 弹头含 `curl/wget 管道进 shell`,答 `1` → 正常执行(只弹不拒,否决权在用户);让它把文本写 `~/.ssh/cfg` → 弹头 `⚠ SSH/AWS 凭据目录`、答 `4` → 文件不存在;让它写 cwd 内 `prod.env` → 弹头 `⚠ *.env 密钥文件`。
+  - **⑤ session 生命周期**:让它跑 `git commit --allow-empty -m s1` → 弹 → 答 `2` → 执行;`rules.json` 条目数与 ④ 末相同(无 `git commit:*` = session 永不写盘);再跑 `git commit --allow-empty -m s2` → **零弹**(同进程内存规则);退出进程 → 重启 → 跑 `git commit --allow-empty -m s3` → **复弹**。
+  - **⑥ 四档键位 + 拒绝带理由 + 模式开关**:`mkdir r2` → 答 `1` → 执行,重跑 `mkdir r2` → 仍弹(一次性);`mkdir r3` → 答 `4 换到 tmp 子目录` → 不执行,回喂含 `user rejected: bash — 换到 tmp 子目录`,模型据此改方案(理由原样不降大小写)。退出 → `node ~/project/mini/src/harness/cli.ts --auto-accept-edits` 重启(启动应打 `auto-accept-edits on`):写 cwd 内 `note.txt` → 零弹且不落规则;跑 `mkdir d`(bash)→ 必弹;写 cwd 内 `top.env` → 必弹 `⚠ *.env 密钥文件`(黑名单压过开关);写 `/tmp/w-c8-out.txt`(cwd 外)→ 必弹。
+- **判卷**:待跑(2026-09-15 剧本定稿,六幕待人工执行;自动化侧基线 = vitest 283 passed / 1 skipped,typecheck + eslint + prettier 干净)
 
 ### AC-T2-2: edit 全批命中落盘
 
@@ -417,39 +449,85 @@
 - Verification:vitest — 断言 error result 回填 + 第 2 turn 开起
 - Priority:Required
 
-### AC-T2-5: beforeToolCall 三选项
+### AC-T2-5: beforeToolCall 四档应答
 
-- Scenario:edit/write/bash 触发;confirm 假应答 yes/always/no
+- Scenario:edit/write/bash 触发;confirm 假应答 `yes` / `session` / `always` / `no`(no 可带 `reason`)
 - Action:各应答一轮
-- Expected:yes→执行;no→不执行返回 skipped;always→执行并落 rules
-- Must not:read 触发 confirm(读类放行)
-- Verification:vitest — 假 confirm 各应答断言执行/跳过
+- Expected:`yes`→执行不记规则;`session`→执行且规则进 `options.sessionRules`(同进程免弹、零落盘);`always`→执行且落 `rulesPath`;`no`→不执行,`isError` 回喂 `user rejected: <tool>`,带 `reason` 则原文附在后面
+- Must not:read 触发 confirm(`skipConfirm`);任一档写盘失败即崩(落盘是优化,丢了下轮重弹 = 安全默认)
+- Verification:vitest — registry.test.ts C6 组 + run-loop.test.ts;键位→档位映射 `mapConfirm` 有测(tui.test.ts),plain 与 TUI 共用同一映射
 - Priority:Required
 
 ### AC-T2-6: 新工具自动过安检
 
-- Scenario:注册一假危险工具 `rmrf`;confirm 假应答 no
+- Scenario:注册一假危险工具 `rmrf`(未声明 `skipConfirm`、未声明 `matchKind`);confirm 假应答 no
 - Action:runLoop 喂假流触发 rmrf
-- Expected:confirm 被调用(逻辑在 hook);no→不执行
-- Must not:rmrf 工具内部自带确认(证明逻辑在 loop hook)
-- Verification:vitest — 断言 rmrf.run 未被调;hook 被调
+- Expected:confirm 被调用(逻辑在 loop hook);no→不执行;`matchOf` 缺省时判据 = `JSON.stringify(args)` 整串相等
+- Must not:rmrf 工具内部自带确认(证明逻辑在 loop hook);rmrf 因"看着像只读"被 C4 表放行 —— 白名单只作用于 `matchKind:"shell"`,非 shell 工具 `parsed === null` 恒不适用
+- Verification:vitest — registry.test.ts AC-T2-6 + C4 AC-4
 - Priority:Required
 
-### AC-T2-7: always 落 rules.json
+### AC-T2-7: always 落盘种子形状
 
-- Scenario:对 bash 命令 `git push` 选 always,前缀 `git:*`
-- Action:选 always
-- Expected:项目目录 rules.json 落盘,含 {tool:"bash",prefix:"git:*"};下次 `git push` 不弹 confirm
-- Verification:vitest — 断言 rules.json 存在且内容;第 2 次 confirm 未被调
+- Scenario:对 bash 段 `git commit -m x` 答 `always`;对 write 目标 `src/loop/x.ts` 答 `always`
+- Action:答 always(`danger === null` 前提下)
+- Expected:落盘 `{tool:"bash",prefix:"git commit:*"}`(shell 类 = 段前 2 token 家族,`seedOf`;复合命令每段一条)与 `{tool:"write",prefix:"path:src/loop/x.ts"}`(文件类 = cwd 内规范化相对路径;建议目录级 glob 时形如 `path:src/loop/**`,`*` 不跨 `/`、`**` 跨);下次同判据不弹
+- Must not:落盘整参 JSON 串(文件内容一变规则即失效 = C1 修的洞);弹面文案与盘面内容不一致(共用同一 `writable` 数组)
+- Verification:vitest — rules.test.ts + bash-parse.test.ts seedOf + registry.test.ts C6「打印数=落盘数」
 - Priority:Required
 
-### AC-T2-8: 手删即撤销 + 无全允许
+### AC-T2-8: 手删即撤销 + 无一键全允许
 
 - Scenario:rules.json 存在
-- Action:删 rules.json 文件后再次 `git push`
-- Expected:重新弹 confirm
-- Must not:UI 提供"所有命令 always"选项;always 必须带 prefix
-- Verification:vitest — 删文件后再触发断言 confirm 被调
+- Action:删 rules.json 文件后再次触发同命令;或试图让规则覆盖一切
+- Expected:重新弹 confirm(`loadRules` 读败 = `[]`,不崩)
+- Must not:UI 出现"所有命令 always"选项;种子为 `*` / 空 / `:*`(空家族)被接受 —— `isValidSeed` 写侧拒 + 读侧滤,always 退化为一次性 yes;cwd 外路径给 `always`(`prefixOf` 返 `*` 标记 = 拒粘)
+- Verification:vitest — rules.test.ts isValidSeed 组 + registry.test.ts「prefixOf 返 `*` → always 拒写下次仍弹」
+- Priority:Required
+
+### AC-T2-9: 复合命令逐段过检(旧洞闭合)
+
+- Scenario:已有规则 `git status:*`
+- Action:bash `git status && rm -rf ~/x`
+- Expected:必弹(第二段不命中),弹面第一行展示完整原命令;`rm -rf ~` 另触发黑名单弹头
+- Must not:首段家族规则放行整条(= C1 前 `git:*` 的真实越权洞);未闭合引号命令被判"解析为空段所以没得弹"(`ok:false` = 保守必弹)
+- Verification:vitest — bash-parse.test.ts(10 例)+ registry.test.ts C3/C5 组
+- Priority:Required
+
+### AC-T2-10: 只读表免弹且不产规则
+
+- Scenario:`ls -la`、`git diff HEAD`、`git status -sb`、`cat x`
+- Action:跑这些命令
+- Expected:confirm 零调用;`rules.json` 零新增(只读短路不进 `writable`,与 preapproved 等价短路但判据取自 loop 侧数据表)
+- Must not:表被 rules.json 覆盖出"全允许";带重定向(`cat x > y`、`ls > /tmp/a`)、命令替换(`echo $(whoami)`)、写副作用 flag(`find . -delete`)的段被算只读
+- Verification:vitest — readonly.test.ts + registry.test.ts C4 AC-1/2/3a/3b/4
+- Priority:Required
+
+### AC-T2-11: 黑名单先于一切 allow
+
+- Scenario:手改 rules.json 加 `sudo:*`(模拟规则写歪)
+- Action:`sudo ls -la`;另试 `curl|sh` 管道、`git push --force`、`git reset --hard`、`chmod 777`、`dd of=`、重定向写 cwd 外、write 目标 `~/.ssh/*` `~/.aws/*` `*.env`
+- Expected:一律必弹,弹头 `⚠ <原因> — `(原因顺序 = 检查顺序,契约钉死);答 `3` 执行但不落盘
+- Must not:规则 / 只读表 / session 档 / `--auto-accept-edits` 任一豁免它;黑名单自动拒(保留用户否决权 —— 真·自动拒 = deny 规则,DEFERRED)
+- Verification:vitest — danger.test.ts(整条 + 每段两形态)+ registry.test.ts C5/C7 组
+- Priority:Required
+
+### AC-T2-12: session 档生命周期
+
+- Scenario:`options.sessionRules` 由调用方(cli = 进程作用域)持有
+- Action:答 `2` 后同进程重跑同判据命令;再换新进程重跑
+- Expected:同进程免弹;新进程复弹;全程零写盘
+- Must not:session 规则落 rules.json;session 档污染"手删即撤销"或"禁一键全允许"两条不变式
+- Verification:vitest — registry.test.ts C6 AC-1 两例;真机 = AC-T2-1 幕⑤
+- Priority:Required
+
+### AC-T2-13: `--auto-accept-edits` 直通范围
+
+- Scenario:flag 开
+- Action:连续 cwd 内 write/edit;cwd 外 write;任意 bash;cwd 内 `secret.env`
+- Expected:仅 `matchKind:"path"` 且种子为 cwd 内相对 `path:` 且黑名单未命中 → 直通且不落新规则
+- Must not:豁免 bash;豁免黑名单(内层 `secret.env` 仍弹);豁免 cwd 外路径;flag 缺省时行为与关 flag 逐字等价(缺省 false = 零新分支)
+- Verification:vitest — registry.test.ts C7 组 + run-loop.test.ts;启动打 `auto-accept-edits on` note 显式来源
 - Priority:Required
 
 ---
@@ -502,7 +580,7 @@
 - Priority:Required
 - **验收句**:直接调 `bashTool.run({command:"sleep 99999", timeout:100})` → ≈100ms 返回 isError:true 且含超时字样,返回后 `pgrep -f "sleep 99999"` 为空(shell 与其子 sleep 皆亡 = 杀进程树,非只 kill 壳);再调 `bashTool.run({command:"seq 1 6000"})` → ToolResult 内联文本 ≤2000 行且 ≤50KB、含末行 `6000` 与截断提示、并含临时文件路径,读该文件 = 全量 6000 行;再把真 bashTool 喂进 runLoop、confirm 恒应答 "no" → 命令 `touch <tmp>/marker` 未执行(marker 不存在),且 loop 回喂 toolResult = T2 既有拒绝语义(isError:true、文本含 "user rejected",run-loop.ts:198)。三剧本任一不满足即判失败。
 - **判卷**:通过(2026-09-14)— seams 与用户确认;AC-T4-2/3/4 各自红→绿,AC-T4-5 真 bashTool 回归绿(T2 门既有,新行为 = 不置 skipConfirm 自动过检);typecheck 干净;全量 64 passed + 1 skipped(smoke)
-- **seams(已确认 2026-09-14)**:`bashTool: Tool`(src/tools/bash.ts,同 read/write 走 Tool 公共接口 types.ts:110);`run({command, timeout?}, signal?)` — 工具内部 AbortController 管 timeout,与 loop 透传的 signal 合并,任一触发 → 杀进程树;杀法 = POSIX 进程组(spawn detached + `process.kill(-pid)`,项目 WSL-only 成立);全量 stdout+stderr 合流落 `os.tmpdir()` 临时文件,路径写进 ToolResult 文本;保尾截断复用 read.ts 同一 `tailTruncate`(导出共享,阈值单源);`prefixOf` = 命令首 token `:*`(与 registry.test 假 bash 同规则);不置 skipConfirm → 自动过 loop 确认门。
+- **seams(已确认 2026-09-14)**:`bashTool: Tool`(src/tools/bash.ts,同 read/write 走 Tool 公共接口 types.ts:110);`run({command, timeout?}, signal?)` — 工具内部 AbortController 管 timeout,与 loop 透传的 signal 合并,任一触发 → 杀进程树;杀法 = POSIX 进程组(spawn detached + `process.kill(-pid)`,项目 WSL-only 成立);全量 stdout+stderr 合流落 `os.tmpdir()` 临时文件,路径写进 ToolResult 文本;保尾截断复用 read.ts 同一 `tailTruncate`(导出共享,阈值单源);不置 skipConfirm → 自动过 loop 确认门。**种子抽取(2026-09-15 C8 校正)**:原记"`prefixOf` = 命令首 token `:*`"自 C2/C3 起不再决定落盘 —— bash 声明 `matchOf` = 整条命令 + `matchKind:"shell"`,loop 拆段后用 `bash-parse.seedOf`(段前 2 token)逐段落盘;`prefixOf` 保留首 token 式仅作 `matchKind` 缺省时回退,当前不可达(死声明,清理候选)。
 
 ### AC-T4-2: 超时杀进程树
 
@@ -742,7 +820,7 @@
 
 - Verification:人工
 - Priority:Required
-- **验收句**:`node src/harness/cli.ts`(H1 只一行配置 = deepseek-chat,密钥读 `DEEPSEEK_API_KEY`,会话落 `~/.mini/sessions/`)启动后输入"用 read 读 package.json 前 3 行,然后说 hello":thinking 段以 ANSI dim 逐字流出、正文逐字流出(非整块,`message_update` 快照只补新增后缀),write/edit/bash 调用前打一行确认(`1 Yes / 2 Yes, always / 3 No`)、read 放行,一轮结束回到 `>` 可续问;每 `message_end` 即时 append 一行 jsonl;provider 报错(如 401)必须在 stdout 可见(`[error] ...`)而非静默或栈崩;`src/harness/` 只有 cli.ts + renderer.ts,除组装外零 loop/校验/压缩逻辑 —— 这就算 H1 完。
+- **验收句**:`node src/harness/cli.ts`(H1 只一行配置 = deepseek-chat,密钥读 `DEEPSEEK_API_KEY`,会话落 `~/.mini/sessions/`)启动后输入"用 read 读 package.json 前 3 行,然后说 hello":thinking 段以 ANSI dim 逐字流出、正文逐字流出(非整块,`message_update` 快照只补新增后缀),write/edit/bash 调用前打确认(2026-09-15 C8 校正:C6 起为四档 `❯ 1 Yes (once)  2 Yes + session  3 Yes + always  4 No` + 将落盘规则行,plain 模式追加 `(1/2/3/4) ❯`;建卡时为三选项)、read 与只读表命中放行,一轮结束回到 `>` 可续问;每 `message_end` 即时 append 一行 jsonl;provider 报错(如 401)必须在 stdout 可见(`[error] ...`)而非静默或栈崩;`src/harness/` 只有 cli.ts + renderer.ts,除组装外零 loop/校验/压缩逻辑 —— 这就算 H1 完。
 - **seams 与用户确认**:renderer = 唯一自动缝(`createRenderer(write)` 返回 `(event) => void`,数组 sink 断 ANSI 串),harness 其余照 DECISIONS W2 纯人工;`RunLoopOptions.confirm` 放宽为可返回 Promise(`run-loop.ts:195` 加 `await`,同步实现零改动);4 真工具补 `description`,read/bash 另补 `schema`(provider 的 `parameters` 单源 = `tool.schema`,harness 只做形态搬运);全仓 import specifier `.js` → `.ts` + tsconfig `allowImportingTsExtensions`(node v24 实测不回解 `.js`→`.ts`,`ERR_MODULE_NOT_FOUND`,G4 补注);`SessionManager.open` 首次运行(目录不存在)= 返回空历史而非抛,显式 `sessionId` 找不到仍抛。
 - **验证**:renderer 4 测(后缀增量 / dim 包裹 / `[error]` 可见 / `[aborted]` 可见)+ memory 首次运行回归 1 测红→绿;typecheck 0;eslint src/harness 0 问题;prettier 干净;全量 89 passed + 1 skipped(smoke)。离线端到端探针两支:①dummy key 打真 deepseek → stdout 出 `[error] HTTP 401`、jsonl 落 user 行、无栈崩、回 `>`;②pty(`script`)+ 挂起端口(本地 socket server 不回包)让流卡在途中,3s 后发 `\003` → stdout 出 `[aborted]` 并回 `>`(loop 的 `signal?.aborted` 检查在 switch 之前,故 transport 的 AbortError 被 abort 分支吃掉、不显示成 `[error]`),空转时再发 `\003` → 进程退出。真 key 人工演示待跑。
 - **已知残留**(H1 不修):①abort 后 `context.messages` 里留一条 `stopReason="aborted"` 的空 assistant 消息,下一轮原样发给 provider —— 是否被拒(400)只有真 key 能验,拒了则归 loop/memory 层清理,不属 harness;②story 16 的"中断在跑的工具"靠 loop 把 signal 传给 `tool.run`(bash 已实现杀进程组),write/edit 不观测 signal = 已在手的落盘不撤回。

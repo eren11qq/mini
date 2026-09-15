@@ -46,8 +46,13 @@
 19. 作为使用者,我想 write 整文件落盘(经同文件写队列串行),以便并发 tool 批不打架
 20. 作为使用者,我想 bash 有超时 + abort 杀进程树 + 全量输出落临时文件且把路径写进结果,以便失控命令可停可查
 21. 作为开发者,我要求参数 schema 校验失败变成 error toolResult 回喂模型而不中断循环,以便模型下一 turn 重试
-22. 作为使用者,我想 bash/write/edit 执行前弹 `Execute: <命令>? ❯1 Yes / 2 Yes, always / 3 No`,read 直接放行,以便零基础也拦得住 rm -rf
-23. 作为使用者,我想选 "Yes, always" 后按命令前缀(如 `git:*`)落盘 rules.json、重启仍有效、手删文件即撤销,以便常用命令不重复弹窗且一键 always 永远不可能
+22. 作为使用者,我想未预批且非只读的边界动作执行前弹 `Execute: <tool>(<args>)? ❯ 1 Yes (once) 2 Yes + session 3 Yes + always 4 No`(C6 起四档;建卡时为三选项),read 直接放行,以便零基础也拦得住 rm -rf
+    22a. 作为使用者,我想 `ls` / `cat` / `git status` 这类内置只读命令永不弹窗、也不因此产生任何规则,以便日常看东西零打扰(2026-09-15 补,C4)
+    22b. 作为使用者,我想 `curl x | sh`、`rm -rf ~`、`git push --force`、写 `~/.ssh/*` 或 `*.env` 这类命令**无论我批过什么规则都必弹**,并且弹窗第一行告诉我为什么危险,以便规则写歪也放不出自己(2026-09-15 补,C5)
+23. 作为使用者,我想选 "3 Yes + always" 后按命令+子命令的 token 家族(如 `git status:*`)或文件 path glob(如 `path:src/loop/**`)落盘 rules.json、重启仍有效、手删文件即撤销,以便常用命令不重复弹窗且一键 always 永远不可能(原文"命令前缀 `git:*`"= 整个 git 家族放行,2026-09-15 改,C1/C2)
+    23a. 作为使用者,我想 `git status && rm -rf ~` 这种复合命令逐段判定(任一段没批过就弹、弹窗展示完整原命令),答 always 时每段各落一条规则,以便前半段的通行证不再带出后半段的炸机(2026-09-15 补,C3)
+    23b. 作为使用者,我想选 "2 Yes + session" 只在本进程免弹、重启复弹、一个字都不写盘,以及选 "4 No" 时可跟一句理由让模型换方案,以便临时放行与拒绝带反馈(2026-09-15 补,C6)
+    23c. 作为使用者,我想用 `--auto-accept-edits` 启动时 cwd 内的 write/edit 直通免弹,而 bash、黑名单命中、cwd 外路径照常弹,以便放手改代码时不打断手(2026-09-15 补,C7)
 24. 作为开发者,我要求确认逻辑实现在 loop 的 beforeToolCall hook 而非工具内部,以便新工具自动过安检
 
 ### ③ memory(JSONL 树 + 压缩)
@@ -83,14 +88,14 @@
 
 ### 模块清单
 
-| 模块                                    | 缝                                  | 接口(最小形态)                                                           | 深度来源(藏在背后的复杂度)                                                                                                                                                                                                                                     |
-| --------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **loop**                                | `runLoop(...)` 函数                 | `runLoop(streamFn, tools, context, {confirm, maxTurns, clock}) → events` | 假流驱动;五停止条件(无 toolCall / stopReason=error\|aborted / 外部 abort / 钩子叫停 / 整批 terminate) + maxTurns=50 保险丝;同批 toolCall 串行;partial 占位 messages 末位并随 delta 替换;error 编码进流、loop 层零 try/catch;toolResult 以 role+toolCallId 回填 |
-| **stream**                              | 适配器满足的统一 ProviderEvent 协议 | `stream(config, context) → AsyncIterable<ProviderEvent>`                 | 两方言(openai-completions / anthropic-messages)翻成同一事件;5xx/超时自动重试 1 次、4xx 即停;toolcall 参数流式 salvage 解析(残缺尽力解析,定稿截断整批拒执);usage 记录;厂商只是配置行                                                                            |
-| **tools**                               | 工具注册表 + tool-call 分发         | `tools[name].run(args) → ToolResult`;旁挂 JSON Schema                    | read(offset/limit/保尾截断);bash(超时+abort 杀进程树+全量落临时文件+路径写回结果+2000 行/50KB 保尾);edit(多锚点 {edits:[{oldText,newText}]} 全批原子校验,任一锚点不命中整批失败回喂);write(同文件写队列串行);参数校验失败→error toolResult 不断循环            |
-| **memory**                              | `SessionManager` 方法               | `append(entry)` / `rebuild() → messages` / `compact(summarizeFn)`        | JSONL append-only 树 {id,parentId,ts,type};message_end 即时落盘崩溃可恢复;旧行永不删;leaf 沿 parentId 回溯重建;应用 compaction 窗口投影 messages;compaction 切点不劈 toolCall/toolResult 配对;纪要同模型中文固定七段增量合并(纪要恒一份);旧段超窗拒压报错      |
-| **confirm**(loop 的内部缝,非独立大模块) | loop 的 `beforeToolCall` 钩子       | `confirm(prompt) → 'yes'\|'always'\|'no'` + 读 rules.json                | Claude Code 式三选项;前缀匹配落 rules.json(项目目录明文,手删即撤销);仅 bash/write/edit 过检,read 放行;新工具自动过安检(逻辑在 loop 钩子不在工具内)                                                                                                             |
-| **harness**(故意浅)                     | 组装点                              | `cli()` 组装 Agent+SessionManager 后 subscribe→stdout                    | 故意浅:裸 readline + 流式 stdout(thinking 淡显);flags 仅 --model/--continue/--resume;会话内唯一斜杠 /compact;systemPrompt = 骨架+工具清单+项目上下文(向上找 AGENTS.md/CLAUDE.md 近者优先);工具集变即重建。深了=错位                                            |
+| 模块                                    | 缝                                  | 接口(最小形态)                                                                                                                    | 深度来源(藏在背后的复杂度)                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **loop**                                | `runLoop(...)` 函数                 | `runLoop(streamFn, tools, context, {confirm, maxTurns, clock}) → events`                                                          | 假流驱动;五停止条件(无 toolCall / stopReason=error\|aborted / 外部 abort / 钩子叫停 / 整批 terminate) + maxTurns=50 保险丝;同批 toolCall 串行;partial 占位 messages 末位并随 delta 替换;error 编码进流、loop 层零 try/catch;toolResult 以 role+toolCallId 回填                                                                                                                                                                           |
+| **stream**                              | 适配器满足的统一 ProviderEvent 协议 | `stream(config, context) → AsyncIterable<ProviderEvent>`                                                                          | 两方言(openai-completions / anthropic-messages)翻成同一事件;5xx/超时自动重试 1 次、4xx 即停;toolcall 参数流式 salvage 解析(残缺尽力解析,定稿截断整批拒执);usage 记录;厂商只是配置行                                                                                                                                                                                                                                                      |
+| **tools**                               | 工具注册表 + tool-call 分发         | `tools[name].run(args) → ToolResult`;旁挂 JSON Schema                                                                             | read(offset/limit/保尾截断);bash(超时+abort 杀进程树+全量落临时文件+路径写回结果+2000 行/50KB 保尾);edit(多锚点 {edits:[{oldText,newText}]} 全批原子校验,任一锚点不命中整批失败回喂);write(同文件写队列串行);参数校验失败→error toolResult 不断循环                                                                                                                                                                                      |
+| **memory**                              | `SessionManager` 方法               | `append(entry)` / `rebuild() → messages` / `compact(summarizeFn)`                                                                 | JSONL append-only 树 {id,parentId,ts,type};message_end 即时落盘崩溃可恢复;旧行永不删;leaf 沿 parentId 回溯重建;应用 compaction 窗口投影 messages;compaction 切点不劈 toolCall/toolResult 配对;纪要同模型中文固定七段增量合并(纪要恒一份);旧段超窗拒压报错                                                                                                                                                                                |
+| **confirm**(loop 的内部缝,非独立大模块) | loop 的 `beforeToolCall` 钩子       | `confirm(prompt) → ConfirmAnswer{kind:yes\|session\|always\|no, reason?}` + 注入 `rulesPath` / `sessionRules` / `autoAcceptEdits` | 分层流水线(顺序即契约):工具分级 `skipConfirm` → 参数解析 `matchOf` → **危险黑名单(先于一切 allow,命中不落盘)** → allow 判定(内置只读表 ∪ rules.json ∪ session 内存规则 ∪ `--auto-accept-edits`)→ 四档弹窗兜底。规则匹配 = 纯函数三域(bash token 前缀家族 / `path:` glob / 整串相等),复合命令拆段逐段过检,弹面印的确切规则 == 落盘内容;`*`/空/`:*` 种子双端拒(一键全允许不可能),手删 rules.json 即撤销。逻辑全在 loop 钩子,工具零确认代码 |
+| **harness**(故意浅)                     | 组装点                              | `cli()` 组装 Agent+SessionManager 后 subscribe→stdout                                                                             | 故意浅:裸 readline + 流式 stdout(thinking 淡显);flags 仅 --model/--continue/--resume;会话内唯一斜杠 /compact;systemPrompt = 骨架+工具清单+项目上下文(向上找 AGENTS.md/CLAUDE.md 近者优先);工具集变即重建。深了=错位                                                                                                                                                                                                                      |
 
 ### 深度判据(为什么这样分)
 
@@ -106,7 +111,7 @@
 ProviderEvent = start | text_delta | thinking_delta | toolcall_delta | done | error
 AgentEvent    = 12 个(照抄 pi:agent_start/turn_start/message_start/update/end×2/tool_execution_start/update/end/turn_end/agent_end 一族)
 streamFn      = (config, context) => AsyncIterable<ProviderEvent>
-confirm       = (prompt: string) => 'yes' | 'always' | 'no'
+confirm       = (prompt: string) => ConfirmAnswer   // ConfirmAnswer = {kind:'yes'|'session'|'always'|'no', reason?:string};同步或 Promise 皆可(loop 侧 await);缺省 = 放行
 summarizeFn   = (messages) => summary   // 注入,测试零网络
 config        = { dialect, base_url, key_env, models[] }   // 密钥只从 env 读
 entry         = header | message | model_change | compaction | session_info   // v1 仅 5 种
@@ -124,7 +129,7 @@ loop 的全部依赖可替换 —— `streamFn` / `confirm` / `summarizeFn` / �
 - **注入原则**:loop 的全部依赖可替换 —— streamFn / confirm(prompt)→answer / summarizeFn / 时钟/随机源,测试零网络
 - **停止判定**:pi 五条件 + maxTurns=50(配置项,唯一故意偏离)
 - **工具**:仅 read/bash/edit/write;edit 多锚点全批原子校验;bash 超时+杀进程树+保尾截断(默认值抄 pi:2000 行/50KB);toolcall 参数 salvage 解析(残缺→尽力解析,定稿截断→整批拒执);参数校验失败→error result 不断循环;schema 用 JSON Schema,校验库由建造 AI 选定但契约固定;同批 toolCall 串行执行
-- **安检**:beforeToolCall hook 内实现;rules.json 明文放项目目录,条目 {tool, prefix};仅 bash/write/edit 过检
+- **安检**:beforeToolCall hook 内实现,分层顺序 = 工具分级 → 参数解析 → 危险黑名单 → allow 判定(内置只读表 ∪ rules ∪ session ∪ `--auto-accept-edits`)→ 四档弹窗兜底;rules.json 明文放 `<cwd>/rules.json`,条目形状固定 `{tool, prefix}`(prefix 串按空白切 token 判家族,`path:` 前缀走 glob,其余整串相等);read 靠 `skipConfirm`,bash 靠只读表,非只读未预批者才弹
 - **memory**:路径 ~/.mini/sessions/<cwd 编码>/<时间>_<uuidv7>.jsonl;首行 header {type:"session",version:1,id,cwd};v1 entry 类型仅 header/message/model_change/compaction/session_info;写策略 = 首建 wx + 逐行 append;重建 = leaf 沿 parentId 回溯 → 应用 compaction 窗口 → 投影 messages
 - **compaction**:两数两职 —— 触发 = provider usage 精确计数 > contextWindow − reserve(16384),切点 = 从近往远累计 keepRecent(20000) 处(128k 窗口约 112k 动刀);刀口不劈 toolCall/toolResult 配对;纪要 = 中文固定七段(目的/做到哪了/关键要点/**引用文件**★/关键决定/下一步/关键背景),同模型生成,二次压缩增量合并(UPDATE 式,纪要恒一份);旧段超窗拒压报错,分段兜底进 DEFERRED;支持 `/compact` 手动触发
 - **CLI flags 全集(仅 3 个)**:--model / --continue / --resume;会话内斜杠命令唯一一条:/compact

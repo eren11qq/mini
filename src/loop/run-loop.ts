@@ -188,7 +188,7 @@ export async function* runLoop(
           result = { content: [{ type: "text", text: vErr }], isError: true };
         } else {
           // AC-T2-5/6/7/8 beforeToolCall 确认门(逻辑在 loop,story 24;confirm 缺省 = 放行,
-          // PRD line 100)。AC-T2-7+C2:命中 rules(ruleMatches:token 家族/path glob/相等,
+          // PRD「深度判据」confirm 条)。AC-T2-7+C2:命中 rules(ruleMatches:token 家族/path glob/相等,
           // 判据输入 = matchOf 完整事实)免弹;always 落盘 prefixOf 种子,
           // `*`/空种子拒写(AC-T2-8 无一键全允许)退化为一次性 yes。
           // C3:matchKind="shell" → bashParse 拆段逐段过检,任一段不命中即弹(展示完整原命令);

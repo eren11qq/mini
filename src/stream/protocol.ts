@@ -2,7 +2,7 @@
 // (厂商配置)+ Transport(网络注入缝)+ StreamFn(loop 收下的函数形状)。此前五个挤 loop/types.ts,
 // 任何缝契约变动都要动 loop 的文件,与「loop = 深模块、其余各管各缝」的所有权相反。
 // 方向锁:protocol→loop/types(取 LoopContext/StopReason/Usage);loop/types 绝不 import 本文件,
-// 否则 ADR-003 斩过的环从类型层复活。ProviderEvent 6 类照 PRD line 106(mini 减法:
+// 否则 ADR-003 斩过的环从类型层复活。ProviderEvent 6 类照 PRD「固定接口契约」块(mini 减法:
 // provider 层 start/text_delta/thinking_delta/toolcall_delta/done/error)。
 import type { LoopContext, StopReason, Usage } from "../loop/types.ts";
 

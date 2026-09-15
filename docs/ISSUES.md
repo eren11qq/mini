@@ -39,11 +39,12 @@ loader 归一化:旧 `{tool:"bash",prefix:"git:*"}` → tokens `["git"]`(family 
 
 ### Acceptance criteria
 
-- [ ] `["git","status"]` 规则:`git status -sb` 免弹、`git commit` 弹
-- [ ] 旧 `{prefix:"git:*"}` 载入 ≡ tokens `["git"]`,`git push` 免弹
-- [ ] `*` / 空数组种子拒写,always 退化一次性 yes
-- [ ] 匹配器纯函数 vitest 覆盖边界(空命令、多余空白、flag 首 token)
-- [ ] loop 源零 try/catch 约束保持
+- [x] `["git","status"]` 规则:`git status -sb` 免弹、`git commit` 弹(rules.test.ts 前两例 + registry.test.ts C2 组真跑 loop 缝)
+- [x] 旧 `{prefix:"git:*"}` 载入 ≡ tokens `["git"]`,`git push` 免弹(rules.test.ts「旧格式迁移语义等价」例)
+- [x] `*` / 空数组种子拒写,always 退化一次性 yes(rules.test.ts isValidSeed 组:`*` / 空 / `:*` 三拒)
+- [x] 匹配器纯函数 vitest 覆盖边界(空命令、多余空白、flag 首 token)—— 空白折叠有独立例;空命令由 `:*` 拒写覆盖;flag 首 token 侧由 `want[0] !== ""` 守卫覆盖,**无独立负例**(C8 记档:补测 = `ruleMatches({tool:"bash",prefix:"-x:*"}, "-y z") === false` 一行)
+- [x] loop 源零 try/catch 约束保持(C8 复扫:`src/loop/*.ts` 非测试文件仅注释含该词,零 `try {`)
+- 实现注记(C8):卡面写的"规则携带 **token 数组**"未采 —— 线上形状钉为 `{tool, prefix}` 的 **prefix 字符串**,匹配时按空白切 token(`git status:*` ≡ `["git","status"]`)。理由:数组需 loader 双形状兼容 + 手改 rules.json 更易破格式;语义等价,已回写 `docs/DECISIONS.md`「② 修订记录」末行
 
 ---
 
@@ -129,7 +130,7 @@ tui.ts 与 cli readline 两处答案映射同步改 1/2/3/4。
 - [x] always 打印的规则文案与 rules.json 实际落盘内容逐字一致(vitest 解析断言,`printedRules` 抽面 == JSON 盘面)
 - [x] no + 理由 → 模型收到的 toolResult 含理由文本(`user rejected: bash — <理由>`,无理由 = 旧文本逐字不变)
 - [x] 复合命令的 always 建议=每段一条,打印数=落盘数(变异测:删列表渲染 → 此锚独红)
-- [~] 键盘映射:`mapConfirm` 四档 1/2/3/4 + `4 <理由>` 有测(tui.test.ts);TUI 确认等待态吞行不破坏 = 归 C8 W 剧本人工跑
+- [x] 键盘映射:`mapConfirm` 四档 1/2/3/4 + `4 <理由>` 有测(tui.test.ts);TUI 确认等待态吞行不破坏 = 归 C8 W 剧本人工跑 → 剧本已落地 `plan.md` AC-T2-1 幕⑤⑥(C8,2026-09-15;待人工跑)
 - 实现注记:`ConfirmAnswer = {kind:"yes"|"session"|"always"|"no", reason?}`(住 loop/types,C6 单一契约);session 容器 = `RunLoopOptions.sessionRules`(cli 进程作用域一条,跨每轮 runLoop 存活,loop 只 push 永不写盘);弹面三行 = 原因+命令 / 四档键位 / 将落盘规则,规则行与落盘共用 `writable` 一份数组(`fmtRule` = `<tool>␣␣<prefix>`)
 
 ---
@@ -162,9 +163,11 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 
 ### Acceptance criteria
 
-- [ ] plan.md AC-T2-* 全部与实现一致,无残留"首 token"表述
-- [ ] DECISIONS T4 修订注明日期与被修订理由(引用本文件 C1–C7)
-- [ ] 新 W 验收剧本六幕人工跑通,判卷记录进 plan.md
+- [x] plan.md AC-T2-* 全部与实现一致,无残留"首 token"表述 —— AC-T2-1 重写(分层流水线总表 + 真机六幕),AC-T2-5 四档,AC-T2-7 种子形状,AC-T2-8 双端拒,新增 AC-T2-9~13(拆段 / 只读表 / 黑名单 / session / 开关);顺带清掉 AC-T4-1 与 AC-H1-1 的旧文案(均标"2026-09-15 C8 校正")
+- [x] DECISIONS T4 修订注明日期与被修订理由(引用本文件 C1–C7)—— T2/T3/T4 行改到现语义 + 新增「② 修订记录」表(逐行:原决策 → 现决策 → 引据卡号);另扫平 PRD 故事 22/23 + 新增 22a/22b/23a/23b/23c(未改号:代码引 `story 24`/`Story 16`/`story 8`,改号会断链)、PRD 缝表 confirm 行与「固定接口契约」confirm 签名、PRD「安检」条;两条 `PRD line 100/106` 代码注释因插行漂移,改指章节锚点
+- [ ] 新 W 验收剧本六幕人工跑通,判卷记录进 plan.md —— 剧本已定稿(AC-T2-1),判卷行现标"待跑";六幕 = ①只读零弹 ②always 必粘 ③复合洞 ④黑名单先于 allow ⑤session 寿命 ⑥四档键位+理由+开关
+- [x] DEFERRED.md 追加候选 —— 新增「确认门」表:deny 规则、批量弹窗合并 + C5 遗留两洞(符号链接逃逸、命令替换躲黑名单)+ 幕② 探针暴露的 always 粒度(段前 2 token,`mkdir w1` 管不到 `mkdir w2`)+ 清账 `bash.prefixOf` 死声明
+- 实现注记(C8):本卡零生产码改动(规则语义变了 = 改 spec)。唯一例外 = 两条注释内的 PRD 行号锚点(漂移自修)。顺带核出 C2 的一条弱 AC(flag 首 token 无独立负例)已在上方记档并给出补测一行;PRD harness 行的"flags 仅 3 个 / 唯一斜杠 /compact"是 C7+C9 的历史漂移,不属本卡,留给下一张 spec 同步卡
 
 ---
 
