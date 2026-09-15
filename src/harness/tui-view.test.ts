@@ -263,3 +263,68 @@ describe("loop 数据 → 条目", () => {
     ).toBeNull();
   });
 });
+
+// ---- C12:仅 bot 行过 markdown(顺序契约:分块→行内→wrapLines→前缀)----
+describe("C12 bot markdown 接线", () => {
+  const BB = "\x1b[1m";
+  const DD = "\x1b[2m";
+  const GG = "\x1b[32m";
+  const RR = "\x1b[0m";
+  const BULLET = String.fromCodePoint(0x2022); // •
+  const VBAR_LINE = String.fromCodePoint(0x258d); // ▍
+  const CHEV = String.fromCodePoint(0x203a); // ›
+  it("bot 条目全谱:head/blank/bold/list 各成逻辑行,首行 ▍ 续行两空格(手算逐字符)", () => {
+    const e: Entry = { kind: "bot", text: "# 标题\n\n**甲乙丙丁**\n\n- 项" };
+    expect(entryLines(e, 10)).toEqual([
+      `${GG}${VBAR_LINE}${RR} ${BB}标题${RR}`,
+      "  ",
+      `  ${BB}甲乙丙丁${RR}`,
+      "  ",
+      `  ${BULLET} 项`,
+    ]);
+  });
+  it("AC-3:超宽 bold CJK 折行 = 每物理行自闭(尾 RESET 头重开)且 vw ≤ w", () => {
+    const e: Entry = { kind: "bot", text: "**甲乙丙丁**" };
+    // w=8 → 折行宽 6:三字 6 列断,丁独行重开 bold(独立于实现手算)。
+    expect(entryLines(e, 8)).toEqual([`${GG}${VBAR_LINE}${RR} ${BB}甲乙丙${RR}`, `  ${BB}丁${RR}`]);
+    expect(entryLines(e, 8).every((l) => vw(l) <= 8)).toBe(true);
+  });
+  it("AC-4:user/tool 行 #/** 保持字面,不过 markdown(逐字节=旧行为)", () => {
+    expect(entryLines({ kind: "user", text: "# x\n**y**" }, 40)).toEqual([
+      `${BB}${CHEV}${RR} # x`,
+      "  **y**",
+    ]);
+    expect(entryLines({ kind: "tool", text: "**t**" }, 40)).toEqual([`${DD}▸${RR} **t**`]);
+  });
+  it("流式半开围栏 live bot = code 行不崩(liveEntry 同走 entryLines 派生链)", () => {
+    expect(entryLines({ kind: "bot", text: "```\nabc" }, 40)).toEqual([
+      `${GG}${VBAR_LINE}${RR} ${DD}abc${RR}`,
+    ]);
+  });
+  it("AC-5:整屏多块 markdown 后 renderView 行数 ≤ height(预算算术不变)", () => {
+    const big: Entry = {
+      kind: "bot",
+      text: Array.from(
+        { length: 6 },
+        (_, i) => `# 头${i}\n\n**中中中中中中中中**\n\n- 甲\n\n> 沟`,
+      ).join("\n\n"),
+    };
+    const out = renderView(view({ entries: [big], height: 20 }));
+    expect(out.split("\n").length).toBeLessThanOrEqual(20);
+    // 弹层在场时预算收紧:框 3 + 顶空 1 + body ≥1,comp ≤ height−8。
+    const withComp = renderView(
+      view({
+        entries: [big],
+        height: 20,
+        completion: {
+          items: Array.from({ length: 12 }, (_, i) => ({
+            name: `c${i}`,
+            description: "",
+            highlighted: false,
+          })),
+        },
+      }),
+    );
+    expect(withComp.split("\n").length).toBeLessThanOrEqual(20);
+  });
+});

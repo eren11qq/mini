@@ -4,6 +4,7 @@
 // 制表/生僻符号一律 \uXXXX 转义:模型直接生成 ╭╯○‿ 类同形字符会漂移(原型期连错 5+ 次),转义源是纯 ASCII,稳。
 import type { AgentMessage, AssistantMessage } from "../loop/types.ts";
 import { B, CYAN, DIM, GREEN, RESET, YELLOW } from "./ansi.ts";
+import { renderMarkdown } from "./markdown.ts";
 
 export { B }; // 重导出保对外面:历史 `import { B } from tui-view` 不破(依赖单向 tui-view → ansi)。
 
@@ -96,8 +97,16 @@ const FAINT: Record<EntryKind, boolean> = {
 };
 
 // 一条逻辑条目 → 若干物理行(首行带符号,续行两空格缩进)。
+// C12 顺序契约:分块 → 行内样式 → wrapLines → 前缀。仅 bot 过 markdown(含 live);
+// user/tool/warn/think 保持字面直折 = 旧行为逐字节不变(防注入变脸)。
 export function entryLines(e: Entry, w: number): string[] {
-  return wrapLines(e.text, Math.max(4, w - 2)).map((l, i) => {
+  const wrapW = Math.max(4, w - 2);
+  const logical =
+    e.kind === "bot"
+      ? renderMarkdown(e.text, wrapW).flatMap((l) => wrapLines(l, wrapW))
+      : undefined;
+  const lines = logical ?? wrapLines(e.text, wrapW);
+  return lines.map((l, i) => {
     const head = i === 0 ? PREFIX[e.kind] : "  ";
     const body = FAINT[e.kind] ? `${DIM}${l}${RESET}` : l;
     return head + body;

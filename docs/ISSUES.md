@@ -235,12 +235,13 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 
 ### Acceptance criteria
 
-- [ ] splitBlocks/styleInline/renderMarkdown 三函数锚点直测(未闭合围栏、未闭合定界符降级)
-- [ ] 恒宽式 `vw(styleInline(s))===vw(s)` 含 CJK 用例钉死
-- [ ] 超宽 bold CJK 段折行后每物理行自闭且 vw≤w(依赖 C10)
-- [ ] user/tool 行 `#`/`**` 保持字面不过 markdown
-- [ ] 整屏多块 markdown 行数 ≤ height,弹层高度预算算术不变
-- [ ] 真机流式无闪、半开围栏不崩、版式人审(HITL)
+- [x] splitBlocks/styleInline/renderMarkdown 三函数锚点直测(markdown.test 10 例;未闭合围栏归 code 到末尾、未闭合定界符逐字节字面降级均有锚)
+- [x] 恒宽不变式钉死(markdown.test)—— 卡面字面式 `vw(styleInline(s))===vw(s)` 对闭合定界符不成立(定界符本身消费可视宽,`**中中**` 8→4),真锚拆两支:闭合 ⇒ vw = 原 vw − 定界符宽(手算 4);未闭合 ⇒ 逐字节字面 ⇒ vw 恒等。含 CJK
+- [x] 超宽 bold CJK 折行:w=8 时 `**甲乙丙丁**` 断两物理行,行尾 RESET 行头重开 bold,每行 vw≤8(tui-view.test C11 后接线锚,复用 C10 自闭机器)
+- [x] user/tool 行 `#`/`**` 字面直折,逐字节 = 旧行为(AC-4 负锚;plain renderer 零改动)
+- [x] 整屏多块 bot markdown 行数 ≤ height,含弹层时预算算术不变(renderView 锚)
+- [ ] 真机流式无闪、半开围栏不崩、版式人审(HITL)—— 待用户跑 `mini` 验后勾
+- 实现注记:markdown.ts 纯叶(import ansi,零回指);版式 2026-09-15 用户裁 = head 整行 B 不吃行内不分级 / code 行 DIM / 无序 `-`/`*`→`•`(有序段落字面)/ 沟 `│ ` 只落逻辑行首 / hr=─×ruleW;砍项见 DEFERRED「markdown v1」表
 
 ---
 
