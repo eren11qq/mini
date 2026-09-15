@@ -54,6 +54,9 @@ export interface RunLoopOptions {
   // 命中 → partial.stopReason="aborted" → turn_end + agent_end(reason="aborted")。
   // streamFn 自己是否观测 signal 留 S1 真 adapter(fetch 传 signal);L3 loop 缝内查兜底。
   signal?: AbortSignal;
+  // C7(docs/ISSUES.md):--auto-accept-edits。开 → matchKind:"path" 工具且目标在 cwd 内
+  // 直通免弹(bash 不受影响;C5 黑名单与 cwd 外照常拦)。缺省 = 现行为零变化。
+  autoAcceptEdits?: boolean;
 }
 
 // ---- AgentEvent 10 类(照抄 pi;agent_end.reason? 为 mini maxTurns 偏离的最小扩)----

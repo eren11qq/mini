@@ -30,18 +30,36 @@ export interface Tool {
   // C3(docs/ISSUES.md):声明 matchOf 输入是 shell 命令 → loop 用 bash-parse 拆段逐段过检,
   // 任一段不命中即弹;always 落盘逐段种子。缺省 = C2 单输入路径。
   // 域知识 = 一个枚举标记,解析语法知识住 loop/bash-parse.ts,matcher 仍零工具名知识。
-  matchKind?: "shell";
+  // C5(docs/ISSUES.md):"path" = matchOf 输入是 `path:` 域 → loop 过 danger.dangerOfPath 黑名单。
+  matchKind?: "shell" | "path";
   // Story 16 / T4:loop 把 options.signal 透传给 run,工具(尤其 bash)据此中断/杀进程树。
   // 可选参 → 不观测 signal 的既有工具零改动。
   run(args: unknown, signal?: AbortSignal): Promise<ToolResult>;
 }
-// C1(docs/ISSUES.md):文件类工具的 matchOf/prefixOf 共用域抽取 = `path:` + cwd 内
-// 规范化相对路径(正斜杠);cwd 外/盘根 → 返 `*` = AC-T2-8 既有拒写标记,always 退化
-// 一次性 yes(loop 零新码)。
+// C1(docs/ISSUES.md):种子抽取(prefixOf)= `path:` + cwd 内规范化相对路径(正斜杠);
+// cwd 外/盘根 → 返 `*` = AC-T2-8 既有拒写标记,always 退化一次性 yes(loop 零新码)。
 export function pathInput(a: unknown): string {
+  const r = pathRelOrMarker(a);
+  return r === null ? "*" : r;
+}
+
+// C5(docs/ISSUES.md):判据抽取(matchOf)= cwd 内同上;cwd 外不再塌成 `*` 而是
+// `path:`+绝对 —— 危险黑名单(`~/.ssh/**` `~/.aws/**` `**/*.env`)要有料可查。
+// 现有规则全为相对种子 → 绝对输入永不命中,弹/C1 拒粘行为零变化。
+export function pathMatchOf(a: unknown): string {
+  const r = pathRelOrMarker(a);
+  return (
+    r ??
+    `path:${resolve(String((a as { path?: unknown }).path ?? ""))
+      .split(sep)
+      .join("/")}`
+  );
+}
+
+function pathRelOrMarker(a: unknown): string | null {
   const abs = resolve(String((a as { path?: unknown }).path ?? ""));
   const rel = relative(process.cwd(), abs);
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return "*";
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
   return `path:${rel.split(sep).join("/")}`;
 }
 

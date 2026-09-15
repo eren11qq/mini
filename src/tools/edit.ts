@@ -4,7 +4,7 @@
 // 全命中 → 一次 writeFile 落盘(AC-T2-2)。锚点按序应用(后锚在前锚结果上找,同 pi edit-diff)。
 // 工具层可 try/catch(loop 层零 try/catch 约束不含 src/tools/,同 read.ts)。
 import { readFile, writeFile } from "node:fs/promises";
-import { pathInput, type Tool, type ToolResult } from "./tool.ts";
+import { pathMatchOf, pathInput, type Tool, type ToolResult } from "./tool.ts";
 
 function err(text: string): ToolResult {
   return { content: [{ type: "text", text }], isError: true };
@@ -42,9 +42,11 @@ export const editTool: Tool = {
     required: ["path", "edits"],
     additionalProperties: false,
   },
-  // C1:种子与判据都只看 path;cwd 外 → `*` 拒粘。
-  matchOf: pathInput,
+  // C1:种子与判据都只看 path;cwd 外种子 → `*` 拒粘。
+  // C5:判据 cwd 外给 `path:`+绝对供黑名单查;matchKind:"path" = 危险路径层开关。
+  matchOf: pathMatchOf,
   prefixOf: pathInput,
+  matchKind: "path",
   async run(args: unknown): Promise<ToolResult> {
     const a = args as { path?: unknown; edits?: unknown };
     const path = String(a.path);

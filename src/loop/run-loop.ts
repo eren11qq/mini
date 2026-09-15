@@ -9,8 +9,10 @@ import type {
 import type { TextBlock, ThinkingBlock, ToolCallBlock } from "../blocks.ts";
 import type { Tool, ToolResult } from "../tools/tool.ts";
 import type { StreamFn } from "../stream/protocol.ts";
+import { isAbsolute } from "node:path";
 import { validateArgs } from "./validate.ts";
 import { bashParse, seedOf } from "./bash-parse.ts";
+import { dangerOfPath, dangerOfShell } from "./danger.ts";
 import { appendRule, isValidSeed, loadRules, ruleMatches, type Rule } from "./rules.ts";
 
 // mini runLoop:L2。toolCall 执行 + toolResult 回填 + 同批串行 + maxTurns 保险丝。
@@ -30,6 +32,8 @@ export async function* runLoop(
   // T2-7:rules 每次 agent run 开头读一遍(手删文件 = 下次 run 重新弹,撤销正路)。
   const rulesPath = options.rulesPath;
   let rules: Rule[] = rulesPath ? await loadRules(rulesPath) : [];
+  // C5:黑名单"重定向出 cwd"与 pathInput 规范化同基准(进程 cwd,run 内不变)。
+  const cwd = process.cwd();
 
   yield { type: "agent_start" };
 
@@ -192,19 +196,39 @@ export async function* runLoop(
           const input = tool.matchOf?.(call.arguments) ?? JSON.stringify(call.arguments);
           const seed = tool.prefixOf?.(call.arguments) ?? input;
           const parsed = tool.matchKind === "shell" ? bashParse(input) : null;
+          // C5(docs/ISSUES.md):危险黑名单先于一切 allow —— 命中必弹(规则/只读表/session/
+          // 模式开关不可豁免;工具分级 skipConfirm 按分层顺序居黑名单之前,不受影响),
+          // 弹头带 "⚠ 原因 —",always 亦不落盘(黑名单永远赢,写规则只误导)。
+          // shell 查「整条+每段」两形态、path 查 `path:` 域,判定全在 danger 纯叶。
+          const danger =
+            tool.matchKind === "shell"
+              ? dangerOfShell(input, cwd)
+              : tool.matchKind === "path"
+                ? dangerOfPath(input)
+                : null;
           const preapproved =
-            parsed === null
+            danger === null &&
+            (parsed === null
               ? rules.some((r) => r.tool === tool.name && ruleMatches(r, input))
               : parsed.ok &&
                 parsed.segments.length > 0 &&
                 parsed.segments.every((seg) =>
                   rules.some((r) => r.tool === tool.name && ruleMatches(r, seg.text)),
-                );
-          if (tool.skipConfirm || !options.confirm || preapproved) {
+                ));
+          // C7(docs/ISSUES.md):--auto-accept-edits —— matchKind:"path" 且种子为 cwd 内
+          // 相对 `path:`(cwd 外 = `*`/绝对,已被上一行 danger 与 C1 拒粘拦住)直通免弹。
+          // bash 不适用;flag 缺省 = 恒 false = 现行为零变化。
+          const autoAccepted =
+            options.autoAcceptEdits === true &&
+            tool.matchKind === "path" &&
+            danger === null &&
+            seed.startsWith("path:") &&
+            !isAbsolute(seed.slice(5));
+          if (tool.skipConfirm || !options.confirm || preapproved || autoAccepted) {
             result = await tool.run(call.arguments, signal);
           } else {
             const answer = await options.confirm(
-              `Execute: ${tool.name}(${JSON.stringify(call.arguments)})? ❯1 Yes / 2 Yes, always / 3 No`,
+              `${danger ? `⚠ ${danger} — ` : ""}Execute: ${tool.name}(${JSON.stringify(call.arguments)})? ❯1 Yes / 2 Yes, always / 3 No`,
             );
             if (answer === "no") {
               result = {
@@ -213,7 +237,8 @@ export async function* runLoop(
               };
             } else {
               result = await tool.run(call.arguments, signal);
-              if (answer === "always" && rulesPath) {
+              // C5:黑名单命中时 always 不落盘(答了也白写,下次仍弹 = 只误导)。
+              if (answer === "always" && rulesPath && danger === null) {
                 if (parsed !== null && parsed.ok) {
                   for (const seg of parsed.segments) {
                     const segSeed = seedOf(seg);

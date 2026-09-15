@@ -195,6 +195,9 @@ async function main(): Promise<void> {
 
   if (io.mode === "plain") io.note(`mini · ${alias} (${provider.models[0]!.id}) · ${cwd}`);
   if (projectContext) io.note(`项目上下文:${projectContext.path}`);
+  // C7:flag 开启显式来源 —— 直通免弹必须让用户知道为什么没弹。
+  if (args.autoAcceptEdits)
+    io.note("auto-accept-edits on —— cwd 内 write/edit 直通免弹(bash/黑名单照常弹)");
 
   for (;;) {
     const line = (await io.ask()).trim();
@@ -230,6 +233,7 @@ async function main(): Promise<void> {
         signal: controller.signal, // SIGINT → loop 停该轮(工具侧 bash 杀进程组)
         rulesPath: join(cwd, "rules.json"), // T2/D4:生产规则落 <cwd>/rules.json
         confirm: (prompt) => io.confirm(prompt), // 答案映射在 tui.ts(与旧逐字等价)
+        autoAcceptEdits: args.autoAcceptEdits, // C7:cli flag → loop 直通判据(默认 false = 零变化)
       })) {
         io.render(event);
         if (event.type === "message_end") {

