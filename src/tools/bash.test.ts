@@ -189,11 +189,12 @@ describe("C3 复合命令逐段过检(真 bashTool 过 loop 门)", () => {
     expect(prompts).toHaveLength(1); // 单段命中既有规则 → 免弹,不加新弹
   });
 
-  // AC-C3-2 原文 `git add -A && git commit -m x` 在 cwd(= 本仓库)有写副作用,测试换用
-  // 只读 git 段保持同形:两段、两家族、always 落两条、重跑 0 弹。
+  // AC-C3-2 原文 `git add -A && git commit -m x` 在 cwd(= 本仓库)有写副作用。曾换用只读
+  // git 段(`git status`/`git diff`)保同形;但 C4 起该两段进只读白名单免弹、不再走 always 落盘,
+  // 故再换 `git rev-parse`/`git ls-files`:两段、两家族、无写副作用、非白名单 → always 落两条、重跑 0 弹。
   it("AC-C3-2 复合 always → 每段一条规则落盘,重跑 0 弹", async () => {
     const rulesPath = join(dir, "rules-c32.json");
-    const cmd = { command: "git status -sb && git diff HEAD" };
+    const cmd = { command: "git rev-parse HEAD && git ls-files" };
     const prompts: string[] = [];
     const confirm = (answer: "always" | "no") => (p: string) => {
       prompts.push(p);
@@ -209,8 +210,8 @@ describe("C3 复合命令逐段过检(真 bashTool 过 loop 门)", () => {
     );
     expect(prompts).toHaveLength(1);
     expect(JSON.parse(await readFile(rulesPath, "utf8"))).toEqual([
-      { tool: "bash", prefix: "git status:*" },
-      { tool: "bash", prefix: "git diff:*" },
+      { tool: "bash", prefix: "git rev-parse:*" },
+      { tool: "bash", prefix: "git ls-files:*" },
     ]);
 
     // 第 2 趟:应答故意 no —— 若还弹,run 被拦、prompts 加 → 红。

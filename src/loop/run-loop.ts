@@ -13,6 +13,7 @@ import { isAbsolute } from "node:path";
 import { validateArgs } from "./validate.ts";
 import { bashParse, seedOf } from "./bash-parse.ts";
 import { dangerOfPath, dangerOfShell } from "./danger.ts";
+import { readOnlyParsed } from "./readonly.ts";
 import { appendRule, isValidSeed, loadRules, ruleMatches, type Rule } from "./rules.ts";
 
 // mini runLoop:L2。toolCall 执行 + toolResult 回填 + 同批串行 + maxTurns 保险丝。
@@ -218,6 +219,11 @@ export async function* runLoop(
                 parsed.segments.every((seg) =>
                   known.some((r) => r.tool === tool.name && ruleMatches(r, seg.text)),
                 ));
+          // C4(docs/ISSUES.md):内置只读白名单 —— 只读 shell 段整体免弹,且不产生规则
+          // (不进 writable、不落盘)。与 preapproved 等价短路,判据取自 loop 侧数据表
+          // (与 rules.json 无关);parsed!==null 恒意味 matchKind==="shell",非 shell 工具不受
+          // 影响(AC-4);danger 黑名单仍在最外层前置压制。
+          const readOnly = danger === null && parsed !== null && readOnlyParsed(parsed);
           // C7(docs/ISSUES.md):--auto-accept-edits —— matchKind:"path" 且种子为 cwd 内
           // 相对 `path:`(cwd 外 = `*`/绝对,已被上一行 danger 与 C1 拒粘拦住)直通免弹。
           // bash 不适用;flag 缺省 = 恒 false = 现行为零变化。
@@ -237,7 +243,7 @@ export async function* runLoop(
                 ? [{ tool: tool.name, prefix: seed }]
                 : []
           ).filter((r) => isValidSeed(r.prefix));
-          if (tool.skipConfirm || !options.confirm || preapproved || autoAccepted) {
+          if (tool.skipConfirm || !options.confirm || preapproved || readOnly || autoAccepted) {
             result = await tool.run(call.arguments, signal);
           } else {
             // 三行弹面:原因+命令 / 四档键位 / 将落盘规则(黑名单命中 = 无第三行,always 亦不落盘)。

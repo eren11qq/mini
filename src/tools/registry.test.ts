@@ -888,15 +888,120 @@ describe("C6 AC-3:no + 理由回喂", () => {
   });
 });
 
+// C4(docs/ISSUES.md):内置只读命令白名单 —— 只读 bash 段免弹且不产生规则。整条经 runLoop
+// 公共入口 + shellFake(真 bash 的 matchKind/判据形状)判,不落 exec。
+describe("C4 端到端:只读白名单免弹 + AC-1 零落盘", () => {
+  it("AC-1 `ls -la` / `git diff HEAD` / `git status -sb` → confirm 零调用、rules.json 不落新条目", async () => {
+    const rulesPath = join(dir, "rules-c4a.json");
+    const calls = { n: 0 };
+    let i = 0;
+    for (const cmd of ["ls -la", "git diff HEAD", "git status -sb"]) {
+      const s = confirmSpy("no"); // 免弹故应答无意义;若弹 → 被 no 拦 → calls 不加 = 红
+      await collect(
+        runLoop(
+          twoTurnStream(toolCallTurn(`c4-${++i}`, "bash", { command: cmd })),
+          [shellFake(calls)],
+          { messages: [{ role: "user", content: "x" }] },
+          { confirm: s.confirm, rulesPath },
+        ),
+      );
+      expect(s.prompts).toHaveLength(0);
+    }
+    expect(calls.n).toBe(3); // 三条均免弹照常执行
+    expect(await readFile(rulesPath, "utf8").catch(() => "[]")).toBe("[]"); // 白名单不产规则
+  });
+
+  it("AC-2 出口条件回弹窗流:`cat x > y`(重定向)/ `ls > /tmp/a`(重定向+黑名单)/ `find . -delete`(写 flag)→ 必弹、答 no 不执行", async () => {
+    const calls = { n: 0 };
+    let i = 0;
+    for (const cmd of ["cat x > y", "ls > /tmp/a", "find . -delete"]) {
+      const s = confirmSpy("no");
+      await collect(
+        runLoop(
+          twoTurnStream(toolCallTurn(`c42-${++i}`, "bash", { command: cmd })),
+          [shellFake(calls)],
+          { messages: [{ role: "user", content: "x" }] },
+          { confirm: s.confirm, rulesPath: join(dir, "rules-none-c42.json") },
+        ),
+      );
+      expect(s.prompts).toHaveLength(1); // 白名单不覆盖 → 弹
+      expect(calls.n).toBe(0); // 答 no → 未执行
+    }
+  });
+
+  it("AC-3a 白名单命中 ≡ pre-existing 规则命中:均短路 confirm", async () => {
+    // 规则命中侧:非只读命令 `git commit -m x` 配 `git commit:*` 规则 → 免弹。
+    const rulesPath = join(dir, "rules-c43.json");
+    await writeFile(rulesPath, JSON.stringify([{ tool: "bash", prefix: "git commit:*" }]));
+    const sRule = confirmSpy("no");
+    await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("c43-r", "bash", { command: "git commit -m x" })),
+        [shellFake({ n: 0 })],
+        { messages: [{ role: "user", content: "x" }] },
+        { confirm: sRule.confirm, rulesPath },
+      ),
+    );
+    expect(sRule.prompts).toHaveLength(0); // 规则短路
+    // 白名单命中侧:只读命令无任何规则 → 同一短路效果(见 AC-1)。
+  });
+
+  it("AC-3b 白名单短路点在黑名单之后:`ls -la && git push --force` / `sudo ls -la` 必弹", async () => {
+    const calls = { n: 0 };
+    let i = 0;
+    for (const cmd of ["ls -la && git push --force", "sudo ls -la"]) {
+      const s = confirmSpy("no");
+      await collect(
+        runLoop(
+          twoTurnStream(toolCallTurn(`c43b-${++i}`, "bash", { command: cmd })),
+          [shellFake(calls)],
+          { messages: [{ role: "user", content: "x" }] },
+          { confirm: s.confirm, rulesPath: join(dir, "rules-none-c43b.json") },
+        ),
+      );
+      expect(s.prompts).toHaveLength(1); // 黑名单赢,只读段不豁免整条
+      expect(calls.n).toBe(0);
+    }
+  });
+
+  it("AC-4 非 shell 假危险工具不受表影响(matchKind 缺省 → parsed=null):matchOf 给 `ls` 仍必弹", async () => {
+    let runCalls = 0;
+    const fakeDanger: Tool = {
+      name: "mystery",
+      matchOf: () => "ls -la", // 看着像只读,但无 matchKind:shell → 白名单不适用
+      prefixOf: () => "*",
+      async run() {
+        runCalls += 1;
+        return { content: [{ type: "text", text: "boom" }], isError: false };
+      },
+    };
+    const s = confirmSpy("no");
+    await collect(
+      runLoop(
+        twoTurnStream(toolCallTurn("c44", "mystery", { anything: 1 })),
+        [fakeDanger],
+        { messages: [{ role: "user", content: "x" }] },
+        { confirm: s.confirm, rulesPath: join(dir, "rules-none-c44.json") },
+      ),
+    );
+    expect(s.prompts).toHaveLength(1); // AC-T2-6 不破:非 shell 工具必过安检
+    expect(runCalls).toBe(0);
+  });
+});
+
 // C6 AC-4:复合命令 always 建议 = 每段一条,打印数 == 落盘数(同源一份数组渲染,不可能漂移)。
 describe("C6 AC-4:复合命令逐段建议", () => {
-  it("复合命令 `git status -sb && git diff HEAD` 答 always → 弹面 2 条规则行 == 落盘 2 条", async () => {
+  // 复合命令取非白名单只读 git 段(`git status`/`git diff` 自 C4 起免弹,不能再当"必弹"样棒);
+  // rev-parse / ls-files 两家族、无写副作用、非只读表 → 仍走 always 逐段落盘路径。
+  it("复合命令 `git rev-parse HEAD && git ls-files` 答 always → 弹面 2 条规则行 == 落盘 2 条", async () => {
     const rulesPath = join(dir, "rules-c6e.json");
     const calls = { n: 0 };
     const s = confirmSpy("always");
     await collect(
       runLoop(
-        twoTurnStream(toolCallTurn("m1", "bash", { command: "git status -sb && git diff HEAD" })),
+        twoTurnStream(
+          toolCallTurn("m1", "bash", { command: "git rev-parse HEAD && git ls-files" }),
+        ),
         [shellFake(calls)],
         { messages: [{ role: "user", content: "x" }] },
         { confirm: s.confirm, rulesPath },
@@ -904,8 +1009,8 @@ describe("C6 AC-4:复合命令逐段建议", () => {
     );
     const disk = JSON.parse(await readFile(rulesPath, "utf8")) as Rule[];
     expect(disk).toEqual([
-      { tool: "bash", prefix: "git status:*" },
-      { tool: "bash", prefix: "git diff:*" },
+      { tool: "bash", prefix: "git rev-parse:*" },
+      { tool: "bash", prefix: "git ls-files:*" },
     ]);
     expect(printedRules(s.prompts[0] ?? "")).toEqual(disk.map((r) => `${r.tool}  ${r.prefix}`));
     expect(s.prompts[0]).toContain("将落盘 2 条规则");

@@ -81,10 +81,11 @@ loop 侧持有一张**数据表**(不放工具):只读 bash 段免弹且不产�
 
 ### Acceptance criteria
 
-- [ ] `ls -la`、`git diff HEAD`、`git status -sb` confirm 零调用、且 rules.json 不落新条目
-- [ ] `cat x > y`、`ls > /tmp/a`、`find . -delete` 必弹
-- [ ] 白名单命中与 pre-existing 规则命中等价地短路 confirm(顺序在黑名单之后,见 C5)
-- [ ] 假危险工具(未声明 skipConfirm)不受表影响,必弹(AC-T2-6 不破)
+- [x] `ls -la`、`git diff HEAD`、`git status -sb` confirm 零调用、且 rules.json 不落新条目(registry C4 AC-1)
+- [x] `cat x > y`、`ls > /tmp/a`、`find . -delete` 必弹(registry C4 AC-2;出口条件另有 readonly.test.ts 单元测 4 例)
+- [x] 白名单命中与 pre-existing 规则命中等价地短路 confirm,顺序在黑名单之后(registry C4 AC-3a 等价 / AC-3b `ls -la && git push --force`、`sudo ls -la` 仍弹)
+- [x] 假危险工具(未声明 skipConfirm)不受表影响,必弹(AC-T2-6 不破)——registry C4 AC-4:matchKind 缺省 → parsed=null → 白名单不适用
+- 实现注记:readonly.ts 纯叶(数据表住 loop 侧不放工具,首版表 = 14 裸命令 + git/node/npm 家族 + find 写 flag);出口条件 = 重定向 / 命令替换 / 写副作用 flag / 解析失败;C4 并表触发 C3 AC-C3-2 与 C6 AC-4 样棒(`git status`/`git diff` 复合)改非白名单 git 段(`git rev-parse`/`git ls-files`)——"C4 未合先以等价验证"之复验兑现
 
 ---
 
