@@ -3,7 +3,7 @@
 // 纯函数零状态零 I/O —— 键盘/重绘在 tui.ts,这里全部可自动测。
 // 制表/生僻符号一律 \uXXXX 转义:模型直接生成 ╭╯○‿ 类同形字符会漂移(原型期连错 5+ 次),转义源是纯 ASCII,稳。
 import type { AgentMessage, AssistantMessage } from "../loop/types.ts";
-import { B, CYAN, DIM, GREEN, INV, RESET, YELLOW } from "./ansi.ts";
+import { B, CYAN, DIM, GREEN, RESET, YELLOW } from "./ansi.ts";
 import { renderMarkdown } from "./markdown.ts";
 
 export { B }; // 重导出保对外面:历史 `import { B } from tui-view` 不破(依赖单向 tui-view → ansi)。
@@ -167,7 +167,7 @@ export interface SelectView {
   sel: number; // 高亮下标由 tui.ts 键盘态裁决(−1 = 不指任何行),视图只画
 }
 const BULL = String.fromCodePoint(0x25cf); // ●(码点构造防漂移,同 STAR 规约)
-// 选中行 = 整行反色横带(INV+CYAN+B 全带单一样式,pad 满宽在带内 → 覆写防旧帧残字);
+// 选中行 = 透明轻档(CYAN ● + B title + desc 前景提亮,整层零背景;反色带版经用户真机裁决 2026-09-16 弃用);
 // 未选行逐字节 = C9 旧 completionLines 非高亮行(diff=0 锚)。超宽复用 wrapLines 自闭机折行、续行缩进对齐。
 // 视口:自 sel 交替扩到 maxRows 行(高亮恒中段 = 首移居中)。sel 恒 −1..len−1(空表配 −1,调用方钳好)。
 export function selectListLines(
@@ -183,10 +183,10 @@ export function selectListLines(
   const wrapW = Math.max(4, w - 2);
   const groups = items.map((it, i) => {
     if (i === sel) {
-      const plainBody = `${it.title}${it.desc === "" ? "" : ` ${it.desc}`}`;
-      return wrapLines(plainBody, wrapW).map(
-        (l, k) =>
-          `${INV}${CYAN}${B}${k === 0 ? `${BULL} ` : "  "}${l}${" ".repeat(Math.max(0, w - 2 - vw(l)))}${RESET}`,
+      // 透明轻档(用户裁决 2026-09-16:反色带太重弃背景):● 主色 + title B + desc 前景提亮(免 DIM)。
+      const styled = `${B}${it.title}${RESET}${it.desc === "" ? "" : ` ${it.desc}`}`;
+      return wrapLines(styled, wrapW).map((l, k) =>
+        pad(`${k === 0 ? `${CYAN}${BULL}${RESET} ` : "  "}${l}`, w),
       );
     }
     const head = `${B}${it.title}${RESET}`;
