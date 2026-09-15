@@ -196,10 +196,10 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 
 ### Acceptance criteria
 
-- [ ] 含 bold 序列输入按宽 2 折行:两行各自行尾 RESET、行头重开码,逐字符断言
-- [ ] 非 ANSI 输入 wrapLines 输出逐字节不变(既有例 diff=0)
-- [ ] tui-view re-export 后对外 import 面零改(测试与消费方不破)
-- [ ] 依赖零环:tui-view → ansi 单向
+- [x] 含 bold 序列输入按宽 2 折行:两行各自行尾 RESET、行头重开码,逐字符断言(2 CJK=4 列,实钉宽 4 两行;宽 2 一字符一行同规则)
+- [x] 非 ANSI 输入 wrapLines 输出逐字节不变(既有例 diff=0)
+- [x] tui-view re-export 后对外 import 面零改(测试与消费方不破)
+- [x] 依赖零环:tui-view → ansi 单向(ansi.test 源码 grep 契约)
 
 ---
 
