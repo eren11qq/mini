@@ -109,22 +109,15 @@ export function headerLines(modelId: string, cwd: string, w: number): string[] {
   return LOGO.map((g, r) => `${CYAN}${pad(g, 10)}${RESET}  ${info[r] ?? ""}`);
 }
 
-// ---- 输入框(全屏唯一边框;框线全码点构造)----
-const BOX = {
-  tl: "╭",
-  tr: "╮",
-  bl: "╰",
-  br: "╯",
-  h: "─",
-};
+// ---- 输入框(Claude Code 式:上下全宽纯横线,零竖边框)----
+const RULE = "─"; // U+2500
 export function inputFrame(input: string, busy: boolean, width: number): string[] {
-  const inner = Math.max(6, width - 2);
+  const cur = fitInput(input, Math.max(6, width) - 4);
   const hint = busy ? ` ${DIM}⋯ 运行中 Ctrl+C 中断${RESET}` : "";
-  const cur = fitInput(input, inner - 4 - vw(hint));
   return [
-    `${BOX.tl}${BOX.h.repeat(inner)}${BOX.tr}`,
-    `│${pad(`${B}>${RESET} ${cur}${CYAN}▌${RESET}` + hint, inner)}│`,
-    `${BOX.bl}${BOX.h.repeat(inner)}${BOX.br}`,
+    RULE.repeat(width),
+    pad(`${B}>${RESET} ${cur}${CYAN}▌${RESET}` + hint, width),
+    RULE.repeat(width),
   ];
 }
 
@@ -139,15 +132,15 @@ export interface TuiView {
   width: number;
   height: number;
 }
-// 行数 = height 严格封顶(4 头 + 空 + body + 空 + 3 框 = 9 + body),超界终端滚动会撕框。
+// 顶栏并入滚动区:消息变长整体向下生长,超屏后顶栏随内容滑出("自动向上移动"手感),输入框钉底。
+// 行数 ≤ height(内容留尾 + 空 + 3 框),超界终端滚动会撕框。
 export function renderView(v: TuiView): string {
-  const lines = headerLines(v.modelId, v.cwd, v.width);
-  lines.push("");
-  const bodyH = Math.max(1, v.height - 9);
-  const all = entriesToLines(v.live ? [...v.entries, v.live] : v.entries, v.width);
-  const tail = all.slice(-bodyH);
-  while (tail.length < bodyH) tail.unshift("");
-  lines.push(...tail, "", ...inputFrame(v.input, v.busy, v.width));
+  const content = [
+    ...headerLines(v.modelId, v.cwd, v.width),
+    ...entriesToLines(v.live ? [...v.entries, v.live] : v.entries, v.width),
+  ];
+  const lines = content.slice(-Math.max(1, v.height - 4));
+  lines.push("", ...inputFrame(v.input, v.busy, v.width));
   return lines.join("\n");
 }
 

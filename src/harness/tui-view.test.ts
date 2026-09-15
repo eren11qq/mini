@@ -58,31 +58,35 @@ describe("变体 A 定稿画面", () => {
       ` ${"╰"}${"╯"}${"╰"}${"╯"}`,
     ]);
   });
-  it("整屏行数 = height 封顶:4 头 + 空 + body + 空 + 3 框", () => {
+  it("整屏:内容顶对齐,输入框跟在内容后(4 头 + 空 + 3 框 = 8 行)", () => {
     const lines = renderView(view({})).split("\n");
-    expect(lines).toHaveLength(20);
+    expect(lines).toHaveLength(8);
     expect(lines[0]).toContain("mini");
     expect(lines[1]).toContain("test-model");
     expect(lines[2]).toContain("/tmp/x");
-    expect(lines[17]!.startsWith("╭")).toBe(true); // 输入框(全屏唯一边框)
-    expect(lines[18]).toContain(">");
-    expect(lines[19]!.startsWith("╰")).toBe(true);
-    expect(vw(lines[17]!)).toBe(60);
+    expect(lines[4]).toBe("");
+    // 输入框 = Claude Code 式纯横线(全宽、无竖边框)。码点转义防漂移。
+    expect(lines[5]).toBe("─".repeat(60));
+    expect(lines[6]).toContain(">");
+    expect(lines[7]).toBe("─".repeat(60));
+    expect(lines.slice(5, 8).join("")).not.toContain("│"); // 框区零竖线(LOGO 的 │ 不算)
   });
-  it("消息流超屏只留尾部,顶栏/输入框永远在场", () => {
+  it("消息流超屏:顶栏随内容滑出,输入框钉底,行数 = height 封顶", () => {
     const entries = Array.from({ length: 60 }, (_, i) => ({
       kind: "user" as const,
       text: `E${i}`,
     }));
-    const lines = renderView(view({ entries })).split("\n");
+    const out = renderView(view({ entries }));
+    const lines = out.split("\n");
     expect(lines).toHaveLength(20);
-    expect(lines[5]).toContain("E49"); // bodyH=11 → 只剩 E49..E59
+    expect(out).not.toContain("mini"); // 顶栏已被滑走
+    expect(lines[0]).toContain("E44"); // 头 4 + 60 条 = 64 行,bodyH=16 → 留 E44..E59
     expect(lines[15]).toContain("E59");
     expect(lines[18]).toContain(">");
   });
   it("busy 时输入行挂运行提示", () => {
     const lines = renderView(view({ busy: true })).split("\n");
-    expect(lines[18]).toContain("Ctrl+C");
+    expect(lines[6]).toContain("Ctrl+C");
   });
   it("entryLines:首行带符号,续行两空格缩进", () => {
     const lines = entryLines({ kind: "bot", text: "一二三四五六七八" }, 10);

@@ -64,7 +64,7 @@ export function createTui(opts: { cwd: string }): ChatIO {
     setImmediate(() => {
       drawQueued = false;
       if (!started) return;
-      const width = Math.min(process.stdout.columns ?? 90, 96);
+      const width = process.stdout.columns ?? 90; // 拉满终端(聊天框向右延伸,无列上限)
       const height = process.stdout.rows ?? 24;
       const ephemeral: Entry | null = live ?? (busy ? { kind: "dim", text: "⋯" } : null);
       const view: TuiView = {

@@ -186,9 +186,6 @@ async function main(): Promise<void> {
   };
 
   if (io.mode === "plain") io.note(`mini · ${alias} (${provider.models[0]!.id}) · ${cwd}`);
-  io.note(
-    `历史 ${context.messages.length} 条 · /model <alias> 热切 · /compact 手动压缩 · Ctrl+C 中断当前轮 / 空转时退出`,
-  );
   if (projectContext) io.note(`项目上下文:${projectContext.path}`);
 
   for (;;) {
