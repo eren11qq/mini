@@ -7,21 +7,15 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { runLoop } from "../loop/run-loop.ts";
-import type {
-  AgentMessage,
-  LoopContext,
-  ProviderConfig,
-  Tool,
-  UserMessage,
-} from "../loop/types.ts";
-import { buildSummarizePrompt } from "../memory/summarize-prompt.ts";
-import { serializeConversation } from "../memory/serialize.ts";
+import type { LoopContext, ProviderConfig, Tool, UserMessage } from "../loop/types.ts";
+import { makeSummarizeFn } from "../memory/compaction.ts";
 import { SessionManager } from "../memory/session-manager.ts";
 import { createStream } from "../stream/core.ts";
 import { bashTool } from "../tools/bash.ts";
 import { editTool } from "../tools/edit.ts";
 import { readTool } from "../tools/read.ts";
 import { writeTool } from "../tools/write.ts";
+import { localDate } from "../util/time.ts";
 import { parseArgs } from "./args.ts";
 import { findProjectContext } from "./project-context.ts";
 import { resolveProvider } from "./providers.ts";
@@ -41,13 +35,6 @@ const providerTools = TOOLS.map((t) => ({
   ...(t.description ? { description: t.description } : {}),
   ...(t.schema ? { parameters: t.schema } : {}),
 }));
-
-// 本地日期 YYYY-MM-DD(toISOString 是 UTC,东八区晚 8 点后跨天错一天)。
-function localDate(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
 
 // 密钥只从 env 读(PRD 约束)。缺 → 友好报错返回 false(启动缺 = 退出;热切缺 = 不切)。
 function ensureKey(io: ChatIO, provider: ProviderConfig): boolean {
@@ -144,17 +131,9 @@ async function main(): Promise<void> {
   io.setModel(provider.models[0]!.id);
   io.loadHistory(rebuilt.messages);
 
-  // H3 S-c 生产 summarizeFn:buildSummarizePrompt(七段规格) + serializeConversation(对话正文)
-  // 喂当前 streamFn = 同厂商同模型(/model 热切后变量已换,闭包取最新)。裁决零在 harness。
-  const summarizeFn = async (old: AgentMessage[], previousSummary?: string): Promise<string> => {
-    const prompt = `${buildSummarizePrompt(previousSummary)}\n${serializeConversation(old)}`;
-    let text = "";
-    for await (const ev of streamFn({ messages: [{ role: "user", content: prompt }], tools: [] })) {
-      if (ev.type === "text_delta") text += ev.delta;
-      else if (ev.type === "error") throw new Error(ev.errorMessage ?? "summarize 流错误");
-    }
-    return text;
-  };
+  // H3 生产 summarizeFn = memory 缝(卡 3 / ADR-004):七段配方拼接、对话正文序列化、流排空、
+  // error 上抛全在 memory/compaction.ts。这里只做箭头转发 = /model 热切换掉 streamFn 后自动取最新。
+  const summarizeFn = makeSummarizeFn((context, signal) => streamFn(context, signal));
 
   const projectContext = findProjectContext({ cwd }); // 启动读一次;缺失 = prompt 该段省略
 

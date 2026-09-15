@@ -123,3 +123,37 @@ typecheck 0 错；vitest 126 passed | 1 skipped（搬迁前后同数）；eslint
 - vitest 155 passed | 1 skipped（+29），typecheck/eslint/prettier 全绿。
 
 沉淀一条规矩：**叶子或缝入口新增公开 interface，裸缝窗口不得跨过 1 个 slice**（Q6=A 的代价上限，超过就欠债）。
+
+## ADR-004：压缩配方下沉 memory 缝，harness 恢复「故意浅」
+
+- 日期：2026-09-15
+- 状态：已采纳
+- 涉及文件：`src/memory/compaction.ts`（新）、`src/util/time.ts`（新）、`src/harness/cli.ts`（摘业务）、`src/memory/session-manager.ts`（日期孪生并一处）
+
+### 背景
+
+架构评审（2026-09-15，候选 3 / Strong）判定：`cli.ts` 首行自证「AC-H1-3 = 本文件零业务逻辑」，实际装着压缩配方（七段指令 + 正文拼接、流排空、error 抛）、压后窗口热换、`/compact` 门、`/model` 热换顺序 ——「什么构成纪要」的知识撕在 cli.ts + summarize-prompt.ts + serialize.ts 三处，且全落在仓库唯一无自动测试的文件里（CI 不可见）。
+
+### 决策
+
+下沉边界 = 「只搬配方 + 排空」（用户在评审三选项里拍 A）：
+
+- **`memory/compaction.ts`** 导出 `makeSummarizeFn(llm: StreamFn)`：与 `CompactOptions.summarizeFn` 同形的生产实现 —— 自持 `buildSummarizePrompt` + `serializeConversation` 拼接、包成单条 user 消息、排空 `text_delta`、遇 `error` 上抛（兜底文案 `summarize 流错误` 原样沿用）。
+- **`SessionManager.compact` 签名不变**（仍收 summarizeFn）。「直接让 compact 收 llmFn」被否：`session-manager.test.ts` 20 处 summarizeFn 要重写 = 卡 1「一个不搬」纪律的反例。
+- **cli 只留「何时按 + 呈现」**：`const summarizeFn = makeSummarizeFn((context, signal) => streamFn(context, signal))` 一行 —— 箭头转发，故 `/model` 热切换掉 `let streamFn` 后自动取最新（等价原闭包语义）。`runCompact` 的 try/catch + rebuild 热换 + io 提示留在 harness：那是轮次编排与呈现，不是纪要知识。
+- **`src/util/time.ts`**：`localDate`（system prompt `<env>` date 段）与 `filenameStamp`（会话文件名）共用一个 pad。评审所称「日期孪生」实为假同源 —— 两处格式本就不同，同源的是「本地墙上时间 + 补零」，故留两个出口、并一处实现。
+
+### 明确不做（本刀纪律）
+
+- `/model` 热换五步不同车（用户拍板）：属 harness 编排，要抽另开卡；同车 = 双 concern 混一刀，判卷分不开。
+- 不下沉 `runCompact`、compact 不返回 messages：memory 不碰 `LoopContext`。
+- 注入形状取 `StreamFn` 而非 `(prompt) => stream` 窄函数：后者会把「包成 user message」那行留在 cli。
+
+### 验证锚点
+
+- 新测 6 例（S-a 4 + S-b 2）。S-a = 首轮 prompt 字面量（含 `tools: []` 与单条 user 打包）/ 二次压缩 `<previous_summary>` + UPDATE 且排在正文之前 / 排空只收 `text_delta`（thinking、toolcall、done 不进气泡）/ error 抛 + 无文案兜底串。S-b = 补零与无冒号文件名戳，Date 用本地分量构造故断言与机器时区无关。期望值 = 手写字面量（七段规格 = M4 / PRD #28），不调被测函数算期望。
+- TDD 记账（诚实口径）：首轮例与 error 例真红→绿（红 = `Failed to load url ./compaction.ts`；error 例先 1 failed 后绿）；二次合并与排空两例到即绿 = 搬迁锚点，证明搬过去行为未变，不冒充红。
+- 变异自查：删 `else if (ev.type === "error") throw` → 仅 error 例红；`buildSummarizePrompt(previousSummary)` → `(undefined)` → 仅二次例红；两次均复原（未入库文件用 `/tmp` 备份，不走 `git checkout`）。
+- vitest 161 passed | 1 skipped（155 → +6）；typecheck 0 错；eslint 0 error（110 warning 未增）；prettier 干净。真机 `/compact` 人工演示 = 用户手动 `npm run cli`。
+
+沉淀一条规矩：**入口文件里「本文件零业务逻辑」这类自证注释，必须有 CI 可见性背书**；否则注释本身就是在报债 —— 要么把业务搬走，要么把文件纳入自动测试面。

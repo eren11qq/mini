@@ -16,6 +16,7 @@ import {
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { AgentMessage } from "../loop/types.ts";
+import { filenameStamp } from "../util/time.ts";
 
 export interface SessionHeader {
   type: "session";
@@ -55,11 +56,6 @@ function uuidv7(): string {
 
 function encodeCwd(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]+/g, "-");
-}
-
-function stamp(d = new Date()): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
 }
 
 export interface SessionManagerOptions {
@@ -172,7 +168,7 @@ export class SessionManager {
     }
     if (this.file === null) {
       const sessionId = uuidv7();
-      this.file = join(this.dir, `${stamp()}_${sessionId}.jsonl`);
+      this.file = join(this.dir, `${filenameStamp()}_${sessionId}.jsonl`);
       mkdirSync(this.dir, { recursive: true });
       const header: SessionHeader = { type: "session", version: 1, id: sessionId, cwd: this.cwd };
       this.leafId = header.id; // 首条 entry 的 parentId = header.id(树根)
