@@ -3,7 +3,7 @@
 本地 tracker。源 = 2026-09-15 设计对话(plan: confirm 系统分层流水线)。
 目标:弹窗从"每次工具调用"降为"仅未预批且非只读的边界动作",同时堵复合命令越权洞。
 分层顺序(所有片共同遵守):工具分级 → 参数解析 → 危险黑名单 → allow 判定(内置只读表 + rules)→ 弹窗兜底。
-合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。
+合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。
 
 ---
 
@@ -183,3 +183,89 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 - [x] Esc 收起、已输文本保留;退格过 `/` 弹层自动消失
 - [x] 补全态与确认门弹层(C6 四档)互不串态:确认等待中不渲染补全
 - [x] 窗口窄/多命令时列表不折行破框(照满宽线修复先例 columns-1)
+
+---
+
+## C10 — ANSI 安全折行 + ansi.ts 叶子(排版地基)
+
+**Type**: AFK · **Blocked by**: 无
+
+### What to build
+
+抽 `src/harness/ansi.ts` 常量叶子(B/DIM/ITALIC/CYAN/GREEN/YELLOW/RESET),tui-view 改 import 并 re-export 保对外面;`wrapLines` 折行时跟踪活动 SGR,断行处行尾补 RESET、下行头重开 = 每物理行自闭;非 ANSI 输入逐字节不变。TDD 切片:先红「bold 串宽 2 折行两行各自自闭」,既有 12 例 diff=0 为过门。
+
+### Acceptance criteria
+
+- [ ] 含 bold 序列输入按宽 2 折行:两行各自行尾 RESET、行头重开码,逐字符断言
+- [ ] 非 ANSI 输入 wrapLines 输出逐字节不变(既有例 diff=0)
+- [ ] tui-view re-export 后对外 import 面零改(测试与消费方不破)
+- [ ] 依赖零环:tui-view → ansi 单向
+
+---
+
+## C11 — thinking 折成一行汇总 + Ctrl+O verbose
+
+**Type**: HITL(汇总行文案需人审) · **Blocked by**: 无
+
+### What to build
+
+`entriesFromMessages` 把相邻 thinking 块合并为单条 think 条目(保留全文);折叠在**渲染期派生**(非构造期销毁原文,否则会话内/回放无法再展开):非 verbose 时一条 think 只画 `✻ 思考·N字`(N=去换行码点数,✻ U+273B 码点构造防漂移);流式 live think 恒展开,message_end 当场收行;`TuiView` 唯一新字段 `verbose: boolean`;tui.ts 绑 `\x0f`(Ctrl+O,现为自由键位)切换 + 一行 dim notice。`--continue` 回放与实时同派生链 = 平价天然成立(锚测钉死)。ChatIO/cli/renderer.ts/plain 模式零改动。
+
+### Acceptance criteria
+
+- [ ] 相邻两个 thinking 块 → 渲染仅一行 `✻ 思考·N字`(N=去换行码点数),码点断言
+- [ ] verbose=true → 全文淡显原样;同 entries 两帧行数差确定
+- [ ] 流式期间 live thinking 展开;message_end 落定即收成一行
+- [ ] `--continue` 重放与实时轮输出一致(平价锚测)
+- [ ] Ctrl+O 切换不写入输入框、不与既有键位互踩(人工,W2)
+- [ ] 汇总行文案人审定稿(HITL)
+
+---
+
+## C12 — bot 文本 Markdown 渲染(基础+代码块,仅 TUI)
+
+**Type**: HITL(视觉需人审) · **Blocked by**: C10
+
+### What to build
+
+新叶 `src/harness/markdown.ts` + 同刀 `markdown.test.ts`(锚点直测,裸缝窗口不跨 slice):`splitBlocks`(head/para/list/quote/code/hr/blank;围栏未闭合 = code 到末尾 = 流式安全)→ `styleInline`(单遍扫描 `**`/`*`/反引号,未闭合定界符字面降级;不变式 `vw(styleInline(s))===vw(s)`)→ `renderMarkdown(src, ruleW)`(零宽度数学;块内不过 styleInline;引用 `│ ` 沟、列表 `•` U+2022、hr 用 ruleW)。顺序契约:分块 → 逐行行内样式 → wrapLines → 前缀(head 永不吃样式)。user/tool 行不过 markdown(防注入变脸)。真机流式无闪 = 人工验(整屏重绘机制不变,帧成本同阶)。
+
+### Acceptance criteria
+
+- [ ] splitBlocks/styleInline/renderMarkdown 三函数锚点直测(未闭合围栏、未闭合定界符降级)
+- [ ] 恒宽式 `vw(styleInline(s))===vw(s)` 含 CJK 用例钉死
+- [ ] 超宽 bold CJK 段折行后每物理行自闭且 vw≤w(依赖 C10)
+- [ ] user/tool 行 `#`/`**` 保持字面不过 markdown
+- [ ] 整屏多块 markdown 行数 ≤ height,弹层高度预算算术不变
+- [ ] 真机流式无闪、半开围栏不崩、版式人审(HITL)
+
+---
+
+## C13 — 叠帧排查:columns 虚高致每帧滚进 scrollback?
+
+**Type**: HITL(需本机终端取证) · **Blocked by**: 无
+
+### What to build
+
+现象(用户真机粘贴为证):每键/每 token 重绘都把旧帧推入 scrollback,规则线 ~180 字符。装机版 columns-1 修复已在,头号嫌疑 = 终端上报 columns > 真实可视宽(WSL 桥/缩窗未收 SIGWINCH)→ 满宽线折一行 → 帧高超 rows → 推滚动。步骤:① 记终端类型+窗口尺寸、缩窗看是否好转;② 临时帧首打印 `columns×rows` 探针定位;③ 根因落回本卡文后选最小刀(如留边 `columns-2` 或 resize 兜底),改动配回归。
+
+### Acceptance criteria
+
+- [ ] 终端类型/尺寸/复现结果与根因结论写回本卡
+- [ ] 修复刀最小生效:连续打字与流式输出下 scrollback 不再叠旧帧
+
+---
+
+## C14 — 发布路径:装机版落后本地 7 commit
+
+**Type**: AFK(push 面需人审带谁上车) · **Blocked by**: 无
+
+### What to build
+
+`~/.local/bin/mini` 跑 `~/.local/share/mini` = origin/main tarball(install.sh VERSION 默认 main);本地 main 领先 7(含卡9、C1+C2、types/memory 卡)→ 装机无弹层。刀:确认上车范围(含已提交 ca9d9d2;**工作区未提交的 bash.ts/bash.test.ts 属另一会话,不带**)→ 从 win git 带 gh token header push(既有先例)→ 重跑 install.sh → 真机验 `/` 弹层 + `/compact` 查表分发。
+
+### Acceptance criteria
+
+- [ ] origin/main 与本地对齐(不含工作区未提交改动)
+- [ ] 重跑 install 后真机 `mini` 出 `/` 弹层、/compact 走注册表分发
+- [ ] 另一会话的 bash.ts/bash.test.ts 原样未动
