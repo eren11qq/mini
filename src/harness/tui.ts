@@ -64,7 +64,8 @@ export function createTui(opts: { cwd: string }): ChatIO {
     setImmediate(() => {
       drawQueued = false;
       if (!started) return;
-      const width = process.stdout.columns ?? 90; // 拉满终端(聊天框向右延伸,无列上限)
+      // columns-1:写满整列会触发终端自动折行,每帧卷出多余物理行 → 超 rows 滚动、旧帧叠进 scrollback。
+      const width = Math.max(20, (process.stdout.columns ?? 90) - 1);
       const height = process.stdout.rows ?? 24;
       const ephemeral: Entry | null = live ?? (busy ? { kind: "dim", text: "⋯" } : null);
       const view: TuiView = {
@@ -77,7 +78,8 @@ export function createTui(opts: { cwd: string }): ChatIO {
         width,
         height,
       };
-      process.stdout.write(`\x1b[H\x1b[2J${renderView(view)}`);
+      // 帧尾 \x1b[J:内容顶对齐、帧高可变,抹掉比上一帧矮时的残底。
+      process.stdout.write(`\x1b[H\x1b[2J${renderView(view)}\x1b[0m\x1b[J`);
     });
   };
   const submit = (): void => {
