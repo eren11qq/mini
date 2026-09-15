@@ -49,6 +49,7 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
   let input = "";
   let busy = false;
   let started = false;
+  let verbose = false; // C11:Ctrl+O(\x0f)切 think 全文/折行;纯视图态,不落盘
   let askWait: ((s: string) => void) | null = null;
   let confirmWait: ((s: string) => void) | null = null;
   const pending: string[] = []; // busy 期按 ⏎ = 排队,本轮 main 回到 ask 立即领走
@@ -112,6 +113,7 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
         width,
         height,
         completion: compView(),
+        verbose,
       };
       // 帧尾 \x1b[J:内容顶对齐、帧高可变,抹掉比上一帧矮时的残底。
       process.stdout.write(`\x1b[H\x1b[2J${renderView(view)}\x1b[0m\x1b[J`);
@@ -176,6 +178,13 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
         } else if (s === "\x7f" || s === "\b") {
           input = input.slice(0, -1);
           afterEdit();
+        } else if (s === "\x0f") {
+          // C11 Ctrl+O:切 think 全文/折行(自由键位,与既有键零冲突);一行 dim notice 进滚动区。
+          verbose = !verbose;
+          entries.push({
+            kind: "dim",
+            text: verbose ? "思考全文(Ctrl+O 折回)" : "思考已折行(Ctrl+O 展开)",
+          });
         } else if (s.startsWith("\x1b")) {
           // Esc = 收起弹层(已输内容保留);↑/↓ 仅在弹层开时移高亮;其余转义照旧吞,别当字面量打进输入框。
           const items = popupItems();

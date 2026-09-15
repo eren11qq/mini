@@ -103,8 +103,21 @@ export function entryLines(e: Entry, w: number): string[] {
     return head + body;
   });
 }
-export const entriesToLines = (es: Entry[], w: number): string[] =>
-  es.flatMap((e) => entryLines(e, w));
+// C11 汇总行:非 verbose 时一条 think 只画一行 `✻ 思考·N字`(N = 去换行后的码点数)。
+// 折叠是渲染期派生 —— 原文一直在 entry 里,verbose 一开即全文;符号走码点构造防源字符漂移。
+const STAR = String.fromCodePoint(0x273b); // ✻
+const MID = String.fromCodePoint(0xb7); // ·
+const thinkChars = (s: string): number => [...s.replace(/\n/g, "")].length;
+export const thinkSummary = (text: string): string => `${STAR} 思考${MID}${thinkChars(text)}字`;
+
+export function entriesToLines(es: Entry[], w: number, verbose = false): string[] {
+  const out: string[] = [];
+  for (const e of es) {
+    if (e.kind === "think" && !verbose) out.push(`${DIM}${thinkSummary(e.text)}${RESET}`);
+    else out.push(...entryLines(e, w));
+  }
+  return out;
+}
 
 // ---- 顶栏(G5 第一版线描幽灵,logo-lab 定稿;字符全码点构造防漂移)----
 export const LOGO = [
@@ -165,6 +178,7 @@ export interface TuiView {
   width: number;
   height: number;
   completion: CompletionView | null;
+  verbose: boolean; // C11:think 全文淡显(Ctrl+O 切);live 条目不受此字段影响,恒展开
 }
 // 顶栏并入滚动区:消息变长整体向下生长,超屏后顶栏随内容滑出("自动向上移动"手感),输入框钉底。
 // 行数 ≤ height(内容留尾 + 空 + 3 框),超界终端滚动会撕框。
@@ -175,7 +189,8 @@ export function renderView(v: TuiView): string {
     : [];
   const content = [
     ...headerLines(v.modelId, v.cwd, v.width),
-    ...entriesToLines(v.live ? [...v.entries, v.live] : v.entries, v.width),
+    ...entriesToLines(v.entries, v.width, v.verbose),
+    ...(v.live ? entryLines(v.live, v.width) : []), // live 恒展开:流式期看全文,message_end 落定才折
   ];
   // 弹层占的尾行从消息体预算里扣(body 至少留 1 行,整屏恒 ≤ height)。
   const lines = content.slice(-Math.max(1, v.height - 4 - comp.length));
@@ -191,8 +206,12 @@ export function entriesFromMessages(msgs: AgentMessage[]): Entry[] {
     else if (m.role === "assistant") {
       for (const b of m.content) {
         if (b.type === "text" && b.text.trim() !== "") out.push({ kind: "bot", text: b.text });
-        else if (b.type === "thinking" && b.text.trim() !== "")
-          out.push({ kind: "think", text: b.text });
+        else if (b.type === "thinking" && b.text.trim() !== "") {
+          // C11:相邻 thinking(同消息内或跨消息)并一条,全文保留 —— 折叠只在渲染期派生。
+          const prev = out[out.length - 1];
+          if (prev && prev.kind === "think") prev.text += `\n${b.text}`;
+          else out.push({ kind: "think", text: b.text });
+        }
       }
       if (m.stopReason === "error")
         out.push({ kind: "warn", text: `[error] ${m.errorMessage ?? ""}` });

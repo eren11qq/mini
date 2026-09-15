@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   entriesFromMessages,
+  entriesToLines,
   entryLines,
   fitInput,
   liveEntry,
@@ -11,10 +12,18 @@ import {
   trunc,
   vw,
   wrapLines,
+  type Entry,
   type TuiView,
 } from "./tui-view.ts";
-import type { AssistantMessage, StopReason } from "../loop/types.ts";
+import type { AgentMessage, AssistantMessage, StopReason } from "../loop/types.ts";
 import type { ContentBlock } from "../blocks.ts";
+
+// 汇总行符号走码点构造(同 tui-view 源规约:生僻符号字面量易漂移)。
+const STAR = String.fromCodePoint(0x273b); // ✻
+const MID = String.fromCodePoint(0xb7); // ·
+// 剥 ANSI 看纯文本(控制字符正则故意的,同 tui-view 源)。
+// eslint-disable-next-line no-control-regex
+const plain = (ls: string[]): string[] => ls.map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
 
 function asst(content: ContentBlock[], stopReason: StopReason = "stop"): AssistantMessage {
   return { role: "assistant", content, stopReason };
@@ -30,6 +39,7 @@ function view(partial: Partial<TuiView>): TuiView {
     width: 60,
     height: 20,
     completion: null,
+    verbose: false,
     ...partial,
   };
 }
@@ -148,6 +158,59 @@ describe("变体 A 定稿画面", () => {
     expect(short[9]).toContain("cmd1");
     expect(short.join("\n")).not.toContain("cmd5"); // 超界的候选不渲染
   });
+  it("C11:非 verbose → 单条 think 只画一行 `\\u273b 思考\\u00b7N字`(N=去换行码点数,逐码点钉死)", () => {
+    // "思"+a+😀+b = 4 码点(代理对计 1);\\n 不计。期望串手算:DIM + 码点串 + RESET。
+    const es: Entry[] = [{ kind: "think", text: "思\na\u{1F600}b" }];
+    // 期望串走 backslash-u 码点转义(纯 ASCII 源,同 tui-view 头注防漂移规约)。
+    expect(entriesToLines(es, 60, false)).toEqual(["\x1b[2m\u273b 思考\u00b74字\x1b[0m"]);
+  });
+  it("C11:verbose=true → think 全文淡显原样;同 entries 两帧行数确定(2 vs 3)", () => {
+    const es: Entry[] = [
+      { kind: "think", text: "一二\n三四" },
+      { kind: "bot", text: "答复" },
+    ];
+    const collapsed = entriesToLines(es, 60, false);
+    const verbose = entriesToLines(es, 60, true);
+    expect(plain(verbose)).toEqual(["  一二", "  三四", "▍ 答复"]);
+    expect(plain(collapsed)).toEqual([`${STAR} 思考${MID}4字`, "▍ 答复"]);
+  });
+  it("C11:renderView 认 verbose —— live think 恒展开,message_end 落定即收一行,verbose 全展开", () => {
+    const m = asst([{ type: "thinking", text: "一二\n三四" }]);
+    const body = (s: string): string[] => plain(s.split("\n")).slice(4, -4); // 去顶栏 4 行 + 空 1 + 框 3
+    expect(body(renderView(view({ live: liveEntry(m), verbose: false })))).toEqual([
+      "  一二",
+      "  三四",
+    ]);
+    expect(body(renderView(view({ entries: entriesFromMessages([m]), verbose: false })))).toEqual([
+      `${STAR} 思考${MID}4字`,
+    ]);
+    expect(body(renderView(view({ entries: entriesFromMessages([m]), verbose: true })))).toEqual([
+      "  一二",
+      "  三四",
+    ]);
+  });
+  it("C11 平价锚:--continue 整段重放 与 逐条 message_end 追加 渲染逐字符相等", () => {
+    const msgs: AgentMessage[] = [
+      asst([
+        { type: "thinking", text: "想一\n想二" },
+        { type: "text", text: "答" },
+        { type: "toolCall", id: "t1", name: "read", arguments: {} },
+      ]),
+      {
+        role: "toolResult",
+        toolCallId: "t1",
+        toolName: "read",
+        content: [{ type: "text", text: "ok" }],
+        isError: false,
+      },
+      asst([{ type: "thinking", text: "再想" }]),
+    ];
+    const replay = entriesFromMessages(msgs);
+    const live: Entry[] = [];
+    for (const m of msgs) live.push(...entriesFromMessages([m]));
+    expect(entriesToLines(live, 60, false)).toEqual(entriesToLines(replay, 60, false));
+    expect(entriesToLines(live, 60, true)).toEqual(entriesToLines(replay, 60, true));
+  });
   it("entryLines:首行带符号,续行两空格缩进", () => {
     const lines = entryLines({ kind: "bot", text: "一二三四五六七八" }, 10);
     expect(lines).toHaveLength(2);
@@ -177,6 +240,17 @@ describe("loop 数据 → 条目", () => {
     expect(es.map((e) => e.kind)).toEqual(["user", "think", "bot", "tool", "warn"]);
     expect(es[3]!.text).toContain("ok 第二行");
     expect(es[4]!.text).toBe("[error] ");
+  });
+  it("C11:相邻两个 thinking 块 → 合并单条 think,全文保留(\\n 相接)", () => {
+    const es = entriesFromMessages([
+      asst([
+        { type: "thinking", text: "第一段\n细节" },
+        { type: "thinking", text: "第二段" },
+        { type: "text", text: "答复" },
+      ]),
+    ]);
+    expect(es.map((e) => e.kind)).toEqual(["think", "bot"]);
+    expect(es[0]!.text).toBe("第一段\n细节\n第二段");
   });
   it("liveEntry 取最后一个 text/thinking 块", () => {
     const m = asst([

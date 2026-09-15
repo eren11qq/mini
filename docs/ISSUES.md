@@ -215,12 +215,12 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 
 ### Acceptance criteria
 
-- [ ] 相邻两个 thinking 块 → 渲染仅一行 `✻ 思考·N字`(N=去换行码点数),码点断言
-- [ ] verbose=true → 全文淡显原样;同 entries 两帧行数差确定
-- [ ] 流式期间 live thinking 展开;message_end 落定即收成一行
-- [ ] `--continue` 重放与实时轮输出一致(平价锚测)
+- [x] 相邻两个 thinking 块 → 渲染仅一行 `✻ 思考·N字`(N=去换行码点数),码点断言
+- [x] verbose=true → 全文淡显原样;同 entries 两帧行数差确定
+- [x] 流式期间 live thinking 展开;message_end 落定即收成一行
+- [x] `--continue` 重放与实时轮输出一致(平价锚测)
 - [ ] Ctrl+O 切换不写入输入框、不与既有键位互踩(人工,W2)
-- [ ] 汇总行文案人审定稿(HITL)
+- [x] 汇总行文案人审定稿(HITL)—— 用户 2026-09-15 裁:照卡上定稿 `✻ 思考·N字`(✻ U+273B / · U+00B7,源里 String.fromCodePoint 构造)
 
 ---
 
