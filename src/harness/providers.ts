@@ -16,6 +16,13 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     key_env: "ZHIPU_API_KEY",
     models: [{ id: "glm-4-plus", contextWindow: 128000 }],
   },
+  // 阿里云百炼 token-plan MaaS 端点(OpenAI 兼容)。1M 窗口 = /compact 自动阈值按此算。
+  qwen: {
+    dialect: "openai-completions",
+    base_url: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    key_env: "QWEN_API_KEY",
+    models: [{ id: "qwen3.8-flash", contextWindow: 1000000 }],
+  },
 };
 
 export function resolveProvider(alias: string): ProviderConfig {

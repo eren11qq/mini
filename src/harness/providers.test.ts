@@ -19,6 +19,15 @@ describe("S-a resolveProvider:alias → 配置行", () => {
     expect(p.key_env).toBe("ZHIPU_API_KEY");
   });
 
+  it("qwen → token-plan maas 端点 + QWEN_API_KEY + 1M 窗口(配置行字面量独立核对)", () => {
+    const p = resolveProvider("qwen");
+    expect(p.dialect).toBe("openai-completions");
+    expect(p.base_url).toBe("https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");
+    expect(p.key_env).toBe("QWEN_API_KEY");
+    expect(p.models[0]!.id).toBe("qwen3.8-flash");
+    expect(p.models[0]!.contextWindow).toBe(1000000);
+  });
+
   it("未知 alias 抛错,提示可选厂商", () => {
     expect(() => resolveProvider("nope")).toThrow(/nope/);
   });
