@@ -158,7 +158,7 @@ describe("变体 A 定稿画面", () => {
     expect(lines[7]).toBe("─".repeat(60)); // 输入框底线
     expect(
       lines[8]!.startsWith(
-        `\x1b[36m${BULL0}\x1b[0m \x1b[36m\x1b[1m/compact\x1b[0m \x1b[2m手动压缩上下文`,
+        `\x1b[36m${BULL0}\x1b[0m \x1b[36m\x1b[1m/compact\x1b[0m   \x1b[36m手动压缩上下文`,
       ),
     ).toBe(true);
     expect(lines[9]!).toContain("/config");
@@ -360,10 +360,10 @@ describe("C16 selectListLines 选中特效", () => {
   const DD = "\x1b[2m";
   const RR = "\x1b[0m";
   const BULL = String.fromCodePoint(0x25cf); // ●
-  it("选中行=零背景,`/命令` 本体换主题淡蓝(CYAN+B)+ ● gutter;desc 恒灰;未选行逐字节=C9 旧行", () => {
-    // 用户裁决 2026-09-16 三轮:背景全撤 —— 选中感 = 命令名变 CYAN(未选 = 本色 B),● 位标保留。
-    // 手算:行0 可见宽 = ●1 + 空格1 + "/co"3 + 空格1 + "压缩上下文"10 = 16 → pad 8。
-    // 行1 未选逐字节同旧 completionLines:两空格 gutter + B title RESET + 空格 + DIM desc RESET,pad 后。
+  it("选中行=零背景整行淡蓝(● + /命令 CYAN+B + desc 同 CYAN);desc 列对齐 = 最长 title+3;未选行零主色", () => {
+    // 用户裁决 2026-09-16 三轮 + 补裁:选中连描述一起变蓝;title/desc 距离 = Claude Code 式列对齐。
+    // 手算:gapCol = max(3,7)+3 = 10。行0 = ●1 sp1 "/co"3 + gap7 + "压缩上下文"10 = 22 → pad 2。
+    // 行1 未选 = 两空格 gutter + "/config"7 + gap3 + DIM"配置"4 = 16 → pad 8。
     const ls = selectListLines(
       [
         { title: "/co", desc: "压缩上下文" },
@@ -374,8 +374,10 @@ describe("C16 selectListLines 选中特效", () => {
       5,
     );
     expect(ls).toHaveLength(2);
-    expect(ls[0]).toBe(`${CC}${BULL}${RR} ${CC}${BB}/co${RR} ${DD}压缩上下文${RR}${" ".repeat(8)}`);
-    expect(ls[1]).toBe(`  ${BB}/config${RR} ${DD}配置${RR}${" ".repeat(10)}`);
+    expect(ls[0]).toBe(
+      `${CC}${BULL}${RR} ${CC}${BB}/co${RR}${" ".repeat(7)}${CC}压缩上下文${RR}${" ".repeat(2)}`,
+    );
+    expect(ls[1]).toBe(`  ${BB}/config${RR}${" ".repeat(3)}${DD}配置${RR}${" ".repeat(8)}`);
     expect(ls[1]).not.toContain(CC); // 非选中行零主色
     expect(ls.join("")).not.toContain(INV); // 整层零反色带(三轮定档钉死)
   });
@@ -391,10 +393,14 @@ describe("C16 selectListLines 选中特效", () => {
       0,
       5,
     );
-    // 行0 选中:● 顶掉 mark(gutter 恒 2 列)+ 命令名 CYAN;行1 未选:✓ 成功色 + 空格。
-    // 手算行1 可见宽:✓1 空格1 "glm"3 空格1 "缺"2 空格1 "key"3 = 12 → pad 12。gutter 符号恒居第 1 列。
-    expect(ls[0]!.startsWith(`${CC}${BULL}${RR} ${CC}${BB}qwen${RR}`)).toBe(true);
-    expect(ls[1]).toBe(`${GG}${CHK}${RR} ${BB}glm${RR} ${DD}缺 key${RR}${" ".repeat(12)}`);
+    // gapCol = max("qwen"4,"glm"3)+3 = 7。行0 选中:● 顶掉 mark + 命令名与 desc 全 CYAN;行1 未选:✓ 成功色。
+    // 手算行1 可见宽:✓1 空格1 "glm"3 gap4 "缺 key"6 = 15 → pad 9。gutter 符号恒居第 1 列。
+    expect(
+      ls[0]!.startsWith(`${CC}${BULL}${RR} ${CC}${BB}qwen${RR}${" ".repeat(3)}${CC}已配`),
+    ).toBe(true);
+    expect(ls[1]).toBe(
+      `${GG}${CHK}${RR} ${BB}glm${RR}${" ".repeat(4)}${DD}缺 key${RR}${" ".repeat(9)}`,
+    );
     expect(vw(ls[0]!)).toBe(24);
     expect(vw(ls[1]!)).toBe(24);
   });
@@ -416,13 +422,14 @@ describe("C16 selectListLines 选中特效", () => {
     expect(selectListLines(items, 12, 3, 0)).toEqual([]);
   });
   it("超宽折行(C10 自闭机复用):选中行续行缩进对齐、每行满宽 pad;未选行续行吃 DIM 重开", () => {
-    // 选中 "/model 切换厂" w=12:CENTER 折宽 10 → 行1 CYAN title + DIM 切 + 行2 DIM 重开(手推)。
+    // gapCol = 6+3 = 9,折宽 10:"/model"+3gap=9,切 → 11 > 10 断,
+    // 行1 = "● /model   "+pad1(尾随 gap 空格不留 RESET),行2 = "  " + CYAN 重开"切换厂" + pad4。
     const sel = selectListLines([{ title: "/model", desc: "切换厂" }], 12, 0, 5);
     expect(sel).toEqual([
-      `${CC}${BULL}${RR} ${CC}${BB}/model${RR} ${DD}切${RR} `,
-      `  ${DD}换厂${RR}${" ".repeat(6)}`,
+      `${CC}${BULL}${RR} ${CC}${BB}/model${RR}${" ".repeat(4)}`,
+      `  ${CC}切换厂${RR}${" ".repeat(4)}`,
     ]);
-    // 同内容未选(sel=1 双行表):行1 = C9 头 + DIM 段自闭折行,行2 = 两空格缩进 + DIM 重开。
+    // 同内容未选(sel=1 双行表):行1 = B 头 + gap 自闭折行(无活动码不留 RESET),行2 = 缩进 + DIM 重开。
     const uns = selectListLines(
       [
         { title: "/model", desc: "切换厂" },
@@ -432,9 +439,9 @@ describe("C16 selectListLines 选中特效", () => {
       1,
       5,
     );
-    expect(uns[0]).toBe(`  ${BB}/model${RR} ${DD}切${RR}${" ".repeat(1)}`);
-    expect(uns[1]).toBe(`  ${DD}换厂${RR}${" ".repeat(6)}`);
-    expect(uns[2]).toBe(`${CC}${BULL}${RR} ${CC}${BB}x${RR}${" ".repeat(9)}`); // 行2 = 选中(● x vw3 → pad 9)
+    expect(uns[0]).toBe(`  ${BB}/model${RR}${" ".repeat(4)}`);
+    expect(uns[1]).toBe(`  ${DD}切换厂${RR}${" ".repeat(4)}`);
+    expect(uns[2]).toBe(`${CC}${BULL}${RR} ${CC}${BB}x${RR}${" ".repeat(9)}`); // 行2 = 选中(空 desc 零 gap,● x vw3 → pad 9)
     // 视口行预算吃折行:每物理行 vw 恒 = w,总行 ≤ maxRows。
     const wide = selectListLines([{ title: "/m", desc: "中中中中中中中" }], 10, 0, 2);
     expect(wide.every((l) => vw(l) === 10)).toBe(true);
@@ -445,7 +452,7 @@ describe("C16 selectListLines 选中特效", () => {
       view({ completion: { items: [{ title: "/co", desc: "压" }], sel: 0 } }),
     ).split("\n");
     expect(ls[7]).toBe("─".repeat(60)); // 输入框底线不动
-    expect(ls[8]!.startsWith(`${CC}${BULL}${RR} ${CC}${BB}/co${RR} ${DD}压`)).toBe(true);
+    expect(ls[8]!.startsWith(`${CC}${BULL}${RR} ${CC}${BB}/co${RR}   ${CC}压`)).toBe(true);
     expect(vw(ls[8]!)).toBe(60);
     // 无匹配:整屏 = 8 定盘 + 1 层行 = 9;60 条消息时 body 预算 20−4−1=15 → 头行 E45(顶栏滑走)。
     const es: Entry[] = Array.from({ length: 60 }, (_, i) => ({

@@ -167,8 +167,8 @@ export interface SelectView {
   sel: number; // 高亮下标由 tui.ts 键盘态裁决(−1 = 不指任何行),视图只画
 }
 const BULL = String.fromCodePoint(0x25cf); // ●(码点构造防漂移,同 STAR 规约)
-// 选中行 = 零背景、命令名换主题淡蓝(CYAN+B)+ ● 位标,desc 恒灰(三轮真机裁决 2026-09-16 定档);
-// 未选行逐字节 = C9 旧 completionLines 非高亮行(diff=0 锚)。超宽复用 wrapLines 自闭机折行、续行缩进对齐。
+// 选中行 = 零背景、整行换主题淡蓝(命令名 CYAN+B + desc 同 CYAN)+ ● 位标(三轮真机裁决 2026-09-16 定档);
+// 未选行 = 本色 B title + 灰 desc;两态 desc 均列对齐 = 最长 title+3(Claude Code 式,补裁)。超宽复用 wrapLines 自闭机折行、续行缩进对齐。
 // 视口:自 sel 交替扩到 maxRows 行(高亮恒中段 = 首移居中)。sel 恒 −1..len−1(空表配 −1,调用方钳好)。
 export function selectListLines(
   items: SelectItem[],
@@ -180,18 +180,21 @@ export function selectListLines(
   if (items.length === 0) return maxRows > 0 ? [pad(`  ${DIM}无匹配${RESET}`, w)] : [];
   if (maxRows <= 0) return [];
   // 一条目 = 一物理行组:复用 wrapLines 自闭机折到 w−2,首行 gutter 符号、续行两空格(缩进对齐 title 列)。
+  // desc 列对齐(Claude Code 式,补裁 2026-09-16):统一贴 最长 title + 3 列;空 desc 零 gap。
   const wrapW = Math.max(4, w - 2);
+  const gapCol = Math.max(...items.map((it) => vw(it.title))) + 3;
   const groups = items.map((it, i) => {
+    const gap = it.desc === "" ? "" : " ".repeat(Math.max(0, gapCol - vw(it.title)));
     if (i === sel) {
-      // 三轮定档(2026-09-16):零背景 —— 选中感 = "/命令" 本体换主题淡蓝(CYAN+B),desc 恒灰,● 位标。
+      // 三轮定档(2026-09-16):零背景 —— 选中整行换主题淡蓝(命令名 CYAN+B + desc 同 CYAN),● 位标。
       const head = `${CYAN}${B}${it.title}${RESET}`;
-      const styled = it.desc === "" ? head : `${head} ${DIM}${it.desc}${RESET}`;
+      const styled = it.desc === "" ? head : `${head}${gap}${CYAN}${it.desc}${RESET}`;
       return wrapLines(styled, wrapW).map((l, k) =>
         pad(`${k === 0 ? `${CYAN}${BULL}${RESET} ` : "  "}${l}`, w),
       );
     }
     const head = `${B}${it.title}${RESET}`;
-    const styled = it.desc === "" ? head : `${head} ${DIM}${it.desc}${RESET}`;
+    const styled = it.desc === "" ? head : `${head}${gap}${DIM}${it.desc}${RESET}`;
     const gut = it.mark ? `${GREEN}${it.mark}${RESET} ` : "  "; // 符号占第 1 列,选中行 ● 顶掉 mark
     return wrapLines(styled, wrapW).map((l, k) => pad(`${k === 0 ? gut : "  "}${l}`, w));
   });
