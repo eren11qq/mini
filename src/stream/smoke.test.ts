@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createStream } from "./openai-completions.ts";
+import { createStream } from "./core.ts";
 import type { ProviderConfig, ProviderEvent } from "../loop/types.ts";
 
 // AC-S4-1 验收句:deepseek 真实在线 smoke —— 持 DEEPSEEK_API_KEY 跑 createStream(默认 transport

@@ -1,7 +1,8 @@
 // S3 anthropic-messages 适配器:把 anthropic messages SSE 翻成统一 ProviderEvent。
 // thinking 块 → thinking_delta;text 块 → text_delta;tool_use 块 input_json_delta 累积
-// + 复用 openai salvage → toolcall_delta。usage(input_tokens/output_tokens → prompt/completion)。
-// 与 openai 共用 Transport 缝 + withRetry(createStream 派发器统一包一层)。
+// + 复用 salvage(salvage.ts)→ toolcall_delta。usage(input_tokens/output_tokens → prompt/completion)。
+// 与 openai 共用 Transport 缝 + withRetry(transport.ts),由 core.ts createStream 派发并统一包一层。
+// 卡 1(ADR-003):salvage 改从叶子导入,双方言互 import 的环已斩断。
 import type {
   LoopContext,
   ProviderConfig,
@@ -10,7 +11,7 @@ import type {
   Transport,
   Usage,
 } from "../loop/types.ts";
-import { salvage } from "./openai-completions.ts";
+import { salvage } from "./salvage.ts";
 
 const STOP_TO_REASON: Record<string, StopReason> = {
   end_turn: "stop",

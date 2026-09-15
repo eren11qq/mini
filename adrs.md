@@ -81,3 +81,34 @@ H1~H3 交付的是裸 readline + 增量 stdout，操控体验差（无整体画�
 
 - `tui-view.test.ts` 10 例：vw CJK 计列 / wrap 硬切 / fitInput 保尾 / LOGO 码点 / 行数=height 封顶 / 超屏留尾 / busy 提示 / 条目映射 / liveEntry。全绿（125 passed）。
 - 真 TTY 人工验收（渲染对位、键感、确认门、Ctrl+C 双语义）= 待用户 `npm run cli` 实测。
+
+## ADR-003：stream 缝入口独立成 core.ts，共享物住叶子斩断方言环 import
+
+- 日期：2026-09-15
+- 状态：已采纳
+- 涉及文件：`src/stream/core.ts`（派发器）、`src/stream/transport.ts`（网络侧叶子）、`src/stream/salvage.ts`（解析叶子）、两方言适配器（只留线格式）、`cli.ts`（import 落点）
+
+### 背景
+
+架构评审（2026-09-15，卡 1）判定：统一事件流的缝没有自己的文件 —— dispatch/transport/retry/salvage 全住 openai-completions.ts（402 行五个 concern），两方言互 import（anthropic 取 salvage ⇢ openai 取 anthropicStream），每个 anthropic/retry/smoke 测试被迫从方言文件进缝。
+
+### 决策
+
+三文件布局（评审 Q1=A，用户拍板）：
+
+- **core.ts = 缝入口**：StreamDeps + createStream（dialect 派发，withRetry 统一包一层）；签名不变（AC-S3-3），调用方唯一变化 = import 落点。
+- **transport.ts = 网络侧叶子**：TransportError / isRetryable（私有）/ defaultTransport / TRANSPORT_IDLE_TIMEOUT_MS / withRetry。
+- **salvage.ts = 解析叶子**：salvage 一族；只 export salvage，internal helper 不暴露（测试不窥私）。
+
+方向约束（环证明，防未来重蹈）：**dispatch 所在文件不可被方言 import，否则 core⇄方言环复活；方言需要的共享物必须住叶子**。依赖图 = 方言→{salvage,transport}，core→{叶子,方言}，零环。
+
+### 明确不做（本刀纪律）
+
+- 纯搬迁，逻辑逐字未动：孪生 guard/截断检查合并 = 卡 2 另刀（Q2）；
+- 类型仍住 loop/types.ts，一个不搬（Q4 冻结，卡 4 处理）；
+- 测试只改 import 落点、断言 diff=0、不改名（retry.test→core.test 归卡 8，Q3）；
+- salvage/transport 锚点直测 = 下一独立 slice（Q6=A）。
+
+### 验证锚点
+
+typecheck 0 错；vitest 126 passed | 1 skipped（搬迁前后同数）；eslint 0 error（110 warning = 原方言代码 any 等，逐字随迁）；prettier 干净；grep 证实 stream 目录零环。真机 deepseek 冒烟 = 用户手动 `npm run cli`（Q5-⑥）。

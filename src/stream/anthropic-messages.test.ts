@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createStream } from "./openai-completions.ts";
+import { createStream } from "./core.ts";
 import type { ProviderConfig, ProviderEvent, Transport } from "../loop/types.ts";
 
 // AC-S3-2: thinking_delta 映射

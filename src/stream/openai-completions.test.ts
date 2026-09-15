@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { createStream, TransportError } from "./openai-completions.ts";
+import { createStream } from "./core.ts";
+import { TransportError } from "./transport.ts";
 import type { ProviderConfig, ProviderEvent, Transport } from "../loop/types.ts";
 
 // AC-S1-2:协议映射

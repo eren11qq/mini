@@ -17,7 +17,7 @@ import type {
 import { buildSummarizePrompt } from "../memory/summarize-prompt.ts";
 import { serializeConversation } from "../memory/serialize.ts";
 import { SessionManager } from "../memory/session-manager.ts";
-import { createStream } from "../stream/openai-completions.ts";
+import { createStream } from "../stream/core.ts";
 import { bashTool } from "../tools/bash.ts";
 import { editTool } from "../tools/edit.ts";
 import { readTool } from "../tools/read.ts";
