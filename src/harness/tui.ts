@@ -4,6 +4,7 @@
 // loop/stream/memory 零改动;确认门/中断/落盘裁决仍全在 loop 与 cli 既有缝里。
 import { createInterface } from "node:readline";
 import type { AgentEvent, AgentMessage, ConfirmAnswer } from "../loop/types.ts";
+import { DIM, RESET } from "./ansi.ts";
 import { filterCommands, type SlashCommand } from "./commands.ts";
 import { createRenderer } from "./renderer.ts";
 import {
@@ -12,6 +13,7 @@ import {
   previewArgs,
   previewResult,
   renderView,
+  vw,
   type CompletionView,
   type Entry,
   type TuiView,
@@ -124,7 +126,17 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
         verbose,
       };
       // 帧尾 \x1b[J:内容顶对齐、帧高可变,抹掉比上一帧矮时的残底。
-      process.stdout.write(`\x1b[H\x1b[2J${renderView(view)}\x1b[0m\x1b[J`);
+      // C13 临时探针(MINI_PROBE=1 才画,定位完即删):c=上报列 r=上报行 h=帧逻辑行(未折) maxvw=帧内最宽行。
+      // 判读:c > 窗口真实可视宽 ⇒ SIGWINCH 未达/WSL 桥虚报;maxvw ≥ c ⇒ 我方超宽 bug;
+      //       maxvw < c 仍折行 ⇒ 终端把模糊宽度字符(─ ▸ ⚠ ✻)画成双宽。探针行自身 +1 帧高,属诊断行为。
+      const body = renderView(view);
+      const probe = process.env.MINI_PROBE
+        ? (() => {
+            const ls = body.split("\n");
+            return `${DIM}[probe] c=${process.stdout.columns} r=${process.stdout.rows} h=${ls.length} maxvw=${Math.max(0, ...ls.map(vw))}${RESET}\n`;
+          })()
+        : "";
+      process.stdout.write(`\x1b[H\x1b[2J${probe}${body}\x1b[0m\x1b[J`);
     });
   };
   const submit = (): void => {

@@ -261,6 +261,7 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 
 - [ ] 终端类型/尺寸/复现结果与根因结论写回本卡
 - [ ] 修复刀最小生效:连续打字与流式输出下 scrollback 不再叠旧帧
+- 进行注记(2026-09-15):探针已埋 `tui.ts` requestDraw(`MINI_PROBE=1` 帧首印 `c= r= h= maxvw=`,定位完即删)。判读表:真实宽<c⇒SIGWINCH/WSL 桥虚报;maxvw≥c⇒渲染层超宽 bug;宽对仍折⇒终端把 ─▸⚠✻ 画双宽。取证卡在用户跑 `MINI_PROBE=1 node src/harness/cli.ts`(或装机版同变量)回传数字。附带发现:「缺 key 零反应秒退」= warn 未画帧即 stop+exit,已由 C15 启动解耦根治。
 
 ---
 
