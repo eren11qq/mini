@@ -3,7 +3,7 @@
 本地 tracker。源 = 2026-09-15 设计对话(plan: confirm 系统分层流水线)。
 目标:弹窗从"每次工具调用"降为"仅未预批且非只读的边界动作",同时堵复合命令越权洞。
 分层顺序(所有片共同遵守):工具分级 → 参数解析 → 危险黑名单 → allow 判定(内置只读表 + rules)→ 弹窗兜底。
-合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。C15(/model 自配 key)= PRD 翻案卡,独立于 C10-C14 链,2026-09-15 插队先做。
+合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。C15(/model 自配 key)= PRD 翻案卡,独立于 C10-C14 链,2026-09-15 插队先做。kilocode 对标三卡 C16(弹层特效)→C17(/connect 向导)→C18(/model 收口)按序合,C17 blocked by C16、C18 blocked by C17。
 
 ---
 
@@ -295,3 +295,75 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 - [x] 离线端到端(隔离 HOME,慢喂管道):无 key 启动 warn 可见不退;发消息被发送门拦下;`/model qwen <key>` 落盘切换;无 key 换 `/model glm` 拒绝保原厂商;新进程 `/model qwen` 不带 key 命中 store 兜底
 - [x] PRD 同步:plan.md 第 7 行 + AC-S1-4 改写、DECISIONS S4 打 ★ 修订
 - [ ] 真机(TUI):`mini` 直开 → `/model qwen sk-xxx` 切换成功 → 重启 `/model qwen` 即复用(用户验后勾)
+- 注:C15 的 `/model <alias> <key>` inline 形态将被 C18 收掉,key 入口唯一化 = `/connect`(C16),2026-09-16 用户裁决照 kilocode。
+
+---
+
+## C16 — 弹层选中特效(kilocode DialogSelect 移植)
+
+**Type**: AFK · **Blocked by**: 无(建议先于 C17,C17/C18 弹层共用本机)
+
+### What to build
+
+现状 C9 补全弹层选中 = `▸`+B,无明暗分级。照 kilo `packages/tui/src/ui/dialog-select.tsx`(816 行)移植其「特效」(实为样式分级,无帧动画):
+
+- 选中行 = **整行反色横带**(`\x1b[7m` 或 bg 常量,pad 满宽,C10 折行自闭机器复用),title BOLD,描述随选中换前景;未选行 title 本色、description 灰
+- gutter 标记:当前项行首 `●`(主色)、已配 key 的厂商 `✓`(成功色)——数据由调用方注入,渲染层只画
+- 零候选 → 不关层改显 dim `无匹配`(kilo No results found 语义;C9 现「自动收层」行为随之改)
+- ↑↓ 环绕、首次移动选中行居中(= 视口切片把高亮行挪进中段)、层高度预算语义不变
+
+刀 = `tui-view.ts` 纯函数面升级(`completionLines` → 泛化 `selectListLines(items, w, sel)`,items = {title, desc, mark?, active?}),`connectLines`/既有补全共用。kilo 的鼠标悬停/滚轮加速/分组头不抄(无对应输入面/单组数据)。
+
+### Acceptance criteria
+
+- [ ] 选中行逐字节含反色开闭序列且 pad 满宽、行自闭(RESET 收尾);非选中行零反色
+- [ ] `●`/`✓` gutter 各占 1 列、续行缩进对齐;无匹配行 dim 且高亮位不指任何行
+- [ ] C9 既有补全测试零回归(diff=0 锚保留,除「零候选收层」一例按新语义改写)
+- [ ] 整屏行数 ≤ height 契约不破(弹层预算公式同步吃 No-results 行)
+
+---
+
+## C17 — `/connect` 向导:厂商层 → key 输入 → 落盘热切
+
+**Type**: AFK(版式真机抽验) · **Blocked by**: C16(吃选中特效机)
+
+### What to build
+
+照 kilocode `packages/tui/src/component/dialog-provider.tsx` + `packages/opencode/src/auth/index.ts` 的 API-key 分支(用户裁决 2026-09-16「照 kilo」):
+
+```
+/connect → 厂商弹层(行 = alias · model-id · ✓已配/无)
+  Enter:直接进 key 输入态(单 method,跳过 kilo 的多 method 选择)
+    帧底独立态:标题「输入 <alias> API key」+ 端点/获取指引一行 + placeholder sk-…
+    明文输入(kilo DialogPrompt 实况即 textarea 不打码,照抄;屏幕暴露风险已知晓并接受)
+    ⏎ 空 → 不关继续等;kilo 同款
+    ⏎ 非空 → saveKey(0600 合并写,复用 keys.ts)→ switchModel 同款校验 → 关层顶栏热切
+    Esc → 任意步取消,零落盘
+```
+
+不抄项:kilo 的 instance.dispose()+bootstrap()(我们是单进程,无 server 层,saveKey 后 resolveKey 现读即生效)、OAuth 分支、Custom Provider 输入、配完顺手弹 DialogModel(一厂商一模型,无可选)。
+
+刀 = `connect-flow.ts` 纯 reducer(state: idle|pick|keyIn{alias,buf};事件:↑↓/⏎/Esc/字符/backspace)+ `tui.ts` 键路由(与 confirmWait/askWait 同族的第三等待态)+ cli 注入口。reducer 迁移表全纯测。
+
+### Acceptance criteria
+
+- [ ] reducer 迁移表驱动测:pick 环绕/进 keyIn/⏎空不落盘/⏎非空发 save+switch 意图/Esc 两步语义
+- [ ] 离线 e2e(隔离 HOME):键序走完 `qwen` 落 keys.json(0600)且顶栏换 id;Esc 全程 → 文件不生成
+- [ ] 弹层样式逐字节走 C16 契约(反色带/●/✓);层开时聊天键位全部让位向导
+- [ ] `/connect` 进 C9 命令注册表(补全可见),plain 模式回落后走既有逐行 ask 通道不弹层(提示用 `/model <alias>` 切已配厂商)
+
+---
+
+## C18 — `/model` 收 inline-key 形态:key 入口唯一 = /connect
+
+**Type**: AFK · **Blocked by**: C17
+
+### What to build
+
+`/model <alias>` 保留(只切 env/已配 key 的厂商,缺 key 报「/connect 配置」);`/model <alias> <key>` 形态删除(聊天记录明文留 key 的风险随 C15 的这条通道一起收)。C15 卡的 AC 措辞与 plan/DECISIONS 相关句跟改:key 落盘入口唯一 = `/connect`。
+
+### Acceptance criteria
+
+- [ ] `/model qwen sk-xxx` 不再落盘:报「多余参数」用法行;C15 已存 keys.json 仍可切
+- [ ] C15 离线剧本重跑(键入口换 `/connect` 后)全绿;switchModel 单入口零分叉
+- [ ] 文档三处同步:ISSUES C15 注、plan.md AC-S1-4、DECISIONS S4(入口名改 `/connect`)
