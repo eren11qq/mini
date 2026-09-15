@@ -45,6 +45,30 @@ describe("宽度与折行", () => {
     expect(wrapLines("一二三四五六", 8)).toEqual(["一二三四", "五六"]);
     expect(wrapLines("a\n\nb", 10)).toEqual(["a", "", "b"]);
   });
+  it("wrapLines ANSI 自闭:bold 串按宽 4 折两行,各自行尾 RESET、行头重开(逐字符钉死)", () => {
+    // 两个 CJK = 4 列,宽 4 → 每行两字(宽 2 会一字符一行,同规则)。
+    expect(wrapLines("\x1b[1m一二三四\x1b[0m", 4)).toEqual([
+      "\x1b[1m一二\x1b[0m",
+      "\x1b[1m三四\x1b[0m",
+    ]);
+    // 输入不带收尾 RESET:末行也必须自行自闭,bold 不外溢。
+    expect(wrapLines("\x1b[1m一二三四", 4)).toEqual(["\x1b[1m一二\x1b[0m", "\x1b[1m三四\x1b[0m"]);
+  });
+  it("wrapLines 样式中途切换:续行头重开整串活动码,死码不滞留上一行行尾", () => {
+    // DIM 在断行点前出现但无后续可见字符 → 归下一行(重开串含之),不污染上行行尾。
+    expect(wrapLines("\x1b[1m一二\x1b[2m三四", 4)).toEqual([
+      "\x1b[1m一二\x1b[0m",
+      "\x1b[1m\x1b[2m三四\x1b[0m",
+    ]);
+    // RESET 后活动清空:续行不吃旧码重开,裸字符起行。
+    expect(wrapLines("\x1b[1m一二\x1b[0m三四", 4)).toEqual(["\x1b[1m一二\x1b[0m", "三四"]);
+  });
+  it("wrapLines 非 ANSI 输入逐字节不变:不注一条转义码", () => {
+    // 期望 = 旧规则(硬切、零插入)手算字面量,非实现复算。
+    const out = wrapLines("abcdefg一二三", 3);
+    expect(out).toEqual(["abc", "def", "g一", "二", "三"]);
+    expect(out.every((l) => !l.includes("\x1b"))).toBe(true);
+  });
   it("trunc 截头保尾加省略号;fitInput 反向(保尾弃头)", () => {
     expect(trunc("abcdefghij", 5)).toBe("abcd…");
     expect(fitInput("0123456789", 5)).toBe("…6789");

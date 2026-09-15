@@ -3,13 +3,9 @@
 // 纯函数零状态零 I/O —— 键盘/重绘在 tui.ts,这里全部可自动测。
 // 制表/生僻符号一律 \uXXXX 转义:模型直接生成 ╭╯○‿ 类同形字符会漂移(原型期连错 5+ 次),转义源是纯 ASCII,稳。
 import type { AgentMessage, AssistantMessage } from "../loop/types.ts";
+import { B, CYAN, DIM, GREEN, RESET, YELLOW } from "./ansi.ts";
 
-export const B = "\x1b[1m";
-const DIM = "\x1b[2m";
-const CYAN = "\x1b[36m";
-const GREEN = "\x1b[32m";
-const YELLOW = "\x1b[33m";
-const RESET = "\x1b[0m";
+export { B }; // 重导出保对外面:历史 `import { B } from tui-view` 不破(依赖单向 tui-view → ansi)。
 
 // ---- 宽度工具(量宽必须剥 ANSI;控制字符正则故意的)----
 // eslint-disable-next-line no-control-regex
@@ -38,6 +34,10 @@ export function fitInput(s: string, w: number): string {
   return `…${out}`;
 }
 // 按可见列宽软换行(\n 先分段;无断点的长串按字符硬切)。
+// SGR 感知:整条转义 = 一个 token(\x1b 前缀且长 >1;裸 \x1b 按宽 1 字符走老路)。
+// 断行处行尾补 RESET、下行行头重开活动码 = 每物理行自闭;活动码全空时零插入,非 ANSI 输入逐字节不变。
+// eslint-disable-next-line no-control-regex
+const CELL = /\x1b\[[0-9;]*m|./gu;
 export function wrapLines(text: string, w: number): string[] {
   const out: string[] = [];
   for (const seg of text.split("\n")) {
@@ -46,13 +46,26 @@ export function wrapLines(text: string, w: number): string[] {
       continue;
     }
     let line = "";
-    for (const c of seg) {
-      if (vw(line + c) > w) {
+    let active = ""; // 全量态:含尚未跟可见字符的滞留码 → 决定续行行头重开
+    let lineOpen = ""; // 本行最后落字符时的态:非空 = 行尾需 RESET(RESET 滞留 pending 也算未关)
+    let pending = ""; // 已读未落字符的码:遇断行归下行重开,段尾无字符跟则弃
+    for (const c of seg.match(CELL) ?? []) {
+      if (c[0] === "\x1b" && c.length > 1) {
+        active = c === RESET ? "" : active + c;
+        pending += c;
+      } else if (vw(line + c) > w) {
+        if (lineOpen) line += RESET;
         out.push(line);
-        line = c;
-      } else line += c;
+        line = active + c;
+        lineOpen = active;
+        pending = "";
+      } else {
+        line += pending + c;
+        lineOpen = active;
+        pending = "";
+      }
     }
-    out.push(line);
+    out.push(lineOpen ? line + RESET : line);
   }
   return out;
 }
