@@ -14,8 +14,8 @@ import {
   previewResult,
   renderView,
   vw,
-  type CompletionView,
   type Entry,
+  type SelectView,
   type TuiView,
 } from "./tui-view.ts";
 
@@ -70,12 +70,12 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
   const pending: string[] = []; // busy 期按 ⏎ = 排队,本轮 main 回到 ask 立即领走
   let interrupt: (() => void) | null = null;
   // C9 补全弹层 = 纯视图态:确认等待中/Esc 收起/非 "/" 行首 → 不出弹层;提交语义零改动。
+  // C16:零候选不再收层 —— 层在(无匹配行),但 Enter/Tab 键位视零候选为"无可选",Enter 照常整行提交。
   let compSel = 0;
   let compDismissed = false;
+  const compActive = (): boolean => !confirmWait && !compDismissed && input.startsWith("/");
   const popupItems = (): SlashCommand[] =>
-    confirmWait || compDismissed || !input.startsWith("/")
-      ? []
-      : filterCommands(opts.commands, input);
+    compActive() ? filterCommands(opts.commands, input) : [];
   const popupOpen = (): boolean => popupItems().length > 0;
   const acceptCompletion = (): void => {
     const items = popupItems();
@@ -89,16 +89,12 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
     compDismissed = false; // 任何编辑重开弹层(退格过 "/" 由非 "/" 前缀自然收起)
     compSel = 0;
   };
-  const compView = (): CompletionView | null => {
+  const compView = (): SelectView | null => {
+    if (!compActive()) return null; // 零候选但层活跃 → 空表 = 无匹配行(C16,不再自动收层)
     const items = popupItems();
-    if (items.length === 0) return null;
-    const sel = Math.min(compSel, items.length - 1);
     return {
-      items: items.map((c, i) => ({
-        name: c.name,
-        description: c.description,
-        highlighted: i === sel,
-      })),
+      items: items.map((c) => ({ title: `/${c.name}`, desc: c.description })),
+      sel: items.length === 0 ? -1 : Math.min(compSel, items.length - 1),
     };
   };
 

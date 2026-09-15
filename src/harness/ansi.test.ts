@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { B, CYAN, DIM, GREEN, ITALIC, RESET, YELLOW } from "./ansi.ts";
+import { B, CYAN, DIM, GREEN, INV, ITALIC, RESET, YELLOW } from "./ansi.ts";
 import * as tuiView from "./tui-view.ts";
 
 describe("ansi.ts 常量叶子", () => {
@@ -15,6 +15,7 @@ describe("ansi.ts 常量叶子", () => {
     expect(YELLOW).toBe("\x1b[33m");
     expect(CYAN).toBe("\x1b[36m");
     expect(RESET).toBe("\x1b[0m");
+    expect(INV).toBe("\x1b[7m");
   });
   it("tui-view 重导出同一对象:B 对外 import 面零改", () => {
     expect(tuiView.B).toBe(B);

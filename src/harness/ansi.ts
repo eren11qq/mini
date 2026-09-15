@@ -7,3 +7,4 @@ export const GREEN = "\x1b[32m";
 export const YELLOW = "\x1b[33m";
 export const CYAN = "\x1b[36m";
 export const RESET = "\x1b[0m";
+export const INV = "\x1b[7m"; // C16 反视频:选中行整带高亮

@@ -9,6 +9,7 @@ import {
   liveEntry,
   LOGO,
   renderView,
+  selectListLines,
   trunc,
   vw,
   wrapLines,
@@ -140,38 +141,40 @@ describe("变体 A 定稿画面", () => {
     const lines = renderView(view({ busy: true })).split("\n");
     expect(lines[6]).toContain("Ctrl+C");
   });
-  it("补全弹层:输入框底线下方逐行渲染,高亮行带 ▸,零竖边框", () => {
+  it("补全弹层:输入框底线下方逐行渲染(C16 选列),选中行=整带反色;零竖边框", () => {
+    const BULL0 = String.fromCodePoint(0x25cf); // ●
     const lines = renderView(
       view({
         input: "/co",
         completion: {
           items: [
-            { name: "compact", description: "手动压缩上下文", highlighted: true },
-            { name: "config", description: "配置", highlighted: false },
+            { title: "/compact", desc: "手动压缩上下文" },
+            { title: "/config", desc: "配置" },
           ],
+          sel: 0,
         },
       }),
     ).split("\n");
     expect(lines[7]).toBe("─".repeat(60)); // 输入框底线
-    expect(lines[8]).toContain("▸");
-    expect(lines[8]).toContain("/compact");
-    expect(lines[8]).toContain("手动压缩上下文");
-    expect(lines[9]).not.toContain("▸");
-    expect(lines[9]).toContain("/config");
+    expect(lines[8]!.startsWith(`\x1b[7m\x1b[36m\x1b[1m${BULL0} /compact 手动压缩上下文`)).toBe(
+      true,
+    );
+    expect(lines[9]!).toContain("/config");
+    expect(lines[9]!).not.toContain("\x1b[7m"); // 未选行零反色
     expect(lines.slice(8).join("")).not.toContain("│"); // 弹区零竖线,同框风格
   });
-  it("窄窗:弹层每行 vw ≤ width(截断不折行);多命令超界:整屏 ≤ height,弹层封顶", () => {
+  it("窄窗:弹层每行 vw = width(折行满宽覆写);多命令超界:整屏 ≤ height,弹层封顶", () => {
+    const BULL0 = String.fromCodePoint(0x25cf); // ●
     const items = Array.from({ length: 6 }, (_, i) => ({
-      name: `cmd${i}`,
-      description: `说明${"一".repeat(20)}`,
-      highlighted: i === 0,
+      title: `cmd${i}`,
+      desc: `说明${"一".repeat(20)}`,
     }));
-    const narrow = renderView(view({ width: 16, completion: { items } })).split("\n");
-    for (const l of narrow.slice(8)) expect(vw(l)).toBeLessThanOrEqual(16); // 只管弹层区(顶栏超宽是既有行为,C9 外)
-    const short = renderView(view({ height: 10, completion: { items } })).split("\n");
+    const narrow = renderView(view({ width: 16, completion: { items, sel: 0 } })).split("\n");
+    for (const l of narrow.slice(8)) expect(vw(l)).toBe(16); // 只管弹层区(顶栏超宽是既有行为,C9 外);折行后每物理行满宽
+    const short = renderView(view({ height: 10, completion: { items, sel: 0 } })).split("\n");
     expect(short.length).toBeLessThanOrEqual(10);
-    expect(short[8]).toContain("▸"); // 底线后前两行仍是弹层
-    expect(short[9]).toContain("cmd1");
+    expect(short[8]!).toContain(BULL0); // 底线后前两行仍是弹层
+    expect(short[9]!).toContain("cmd1");
     expect(short.join("\n")).not.toContain("cmd5"); // 超界的候选不渲染
   });
   it("C11:非 verbose → 单条 think 只画一行 `\\u273b 思考\\u00b7N字`(N=去换行码点数,逐码点钉死)", () => {
@@ -337,14 +340,119 @@ describe("C12 bot markdown 接线", () => {
         entries: [big],
         height: 20,
         completion: {
-          items: Array.from({ length: 12 }, (_, i) => ({
-            name: `c${i}`,
-            description: "",
-            highlighted: false,
-          })),
+          items: Array.from({ length: 12 }, (_, i) => ({ title: `c${i}`, desc: "" })),
+          sel: 0,
         },
       }),
     );
     expect(withComp.split("\n").length).toBeLessThanOrEqual(20);
+  });
+});
+
+// ---- C16:弹层选中特效(kilo DialogSelect 样式分级;期望串全手算码点,独立于实现)----
+describe("C16 selectListLines 选中特效", () => {
+  const INV = "\x1b[7m";
+  const BB = "\x1b[1m";
+  const CC = "\x1b[36m";
+  const DD = "\x1b[2m";
+  const RR = "\x1b[0m";
+  const BULL = String.fromCodePoint(0x25cf); // ●
+  it("选中行=整行反色横带(INV+CYAN+B 开、● gutter、pad 满宽、RESET 自闭);未选行零反色且逐字节=C9 旧行", () => {
+    // 手算:行0 可见宽 = ●1 + 空格1 + "/co"3 + 空格1 + "压缩上下文"10 = 16 → pad 8。
+    // 行1 未选逐字节同旧 completionLines:两空格 gutter(旧 mark 位 + 空格)+ B title RESET + 空格 + DIM desc RESET,pad 后。
+    const ls = selectListLines(
+      [
+        { title: "/co", desc: "压缩上下文" },
+        { title: "/config", desc: "配置" },
+      ],
+      24,
+      0,
+      5,
+    );
+    expect(ls).toHaveLength(2);
+    expect(ls[0]).toBe(`${INV}${CC}${BB}${BULL} /co 压缩上下文${" ".repeat(8)}${RR}`);
+    expect(ls[1]).toBe(`  ${BB}/config${RR} ${DD}配置${RR}${" ".repeat(10)}`);
+    expect(ls[1]).not.toContain(INV); // 非选中行零反色
+  });
+  it("gutter 各占 1 列:未选行 mark(如 ✓)= 成功色,选中行 ● 顶掉 mark;title 起列恒 = 2", () => {
+    const CHK = String.fromCodePoint(0x2713); // ✓
+    const GG = "\x1b[32m";
+    const ls = selectListLines(
+      [
+        { title: "qwen", desc: "已配", mark: CHK },
+        { title: "glm", desc: "缺 key", mark: CHK },
+      ],
+      24,
+      0,
+      5,
+    );
+    // 行0 选中:带首 = ●(mark 被顶掉,gutter 恒 2 列);行1 未选:✓ 成功色 + 空格。
+    // 手算行1 可见宽:✓1 空格1 "glm"3 空格1 "缺"2 空格1 "key"3 = 12 → pad 12。gutter 符号恒居第 1 列。
+    expect(ls[0]!.startsWith(`${INV}${CC}${BB}${BULL} qwen`)).toBe(true);
+    expect(ls[1]).toBe(`${GG}${CHK}${RR} ${BB}glm${RR} ${DD}缺 key${RR}${" ".repeat(12)}`);
+    expect(vw(ls[0]!)).toBe(24);
+    expect(vw(ls[1]!)).toBe(24);
+  });
+  it("零候选 → 单行 dim `无匹配`(不关层语义):满宽 pad、全带零反色、高亮不指任何行", () => {
+    const ls = selectListLines([], 24, -1, 5);
+    // 手算:2 空 gutter + "无匹配"6 列 = 8 → pad 16。
+    expect(ls).toEqual([`  ${DD}无匹配${RR}${" ".repeat(16)}`]);
+    expect(ls.join("")).not.toContain(INV);
+  });
+  it("视口切片:选中行恒在中段、行 ≤ maxRows、贴边不外滑(sel 中/头/尾 三例手推)", () => {
+    const items = Array.from({ length: 8 }, (_, i) => ({ title: `cmd${i}`, desc: "" }));
+    const strip = (ls: string[]): string[] => ls.map((l) => plain([l])[0]!.trim());
+    // sel=5 预算 3:自 sel 下扩(6)上扩(4)→ [4,5,6],选中行居中。
+    expect(strip(selectListLines(items, 12, 5, 3))).toEqual(["cmd4", `${BULL} cmd5`, "cmd6"]);
+    // sel=0:下扩到头 → [0,1,2];sel=7 尾:上扩到头 → [5,6,7]。
+    expect(strip(selectListLines(items, 12, 0, 3))).toEqual([`${BULL} cmd0`, "cmd1", "cmd2"]);
+    expect(strip(selectListLines(items, 12, 7, 3))).toEqual(["cmd5", "cmd6", `${BULL} cmd7`]);
+    // maxRows=0 → 空(屏容不下一行,层不出)。
+    expect(selectListLines(items, 12, 3, 0)).toEqual([]);
+  });
+  it("超宽折行(C10 自闭机复用):选中带每物理行满宽 INV..RESET、续行缩进对齐;未选行续行吃 DIM 重开", () => {
+    // 选中 "/model 切换厂" w=12:内容折宽 10 → ["/model 切","换厂"](手推)。
+    const sel = selectListLines([{ title: "/model", desc: "切换厂" }], 12, 0, 5);
+    expect(sel).toEqual([
+      `${INV}${CC}${BB}● /model 切 ${RR}`,
+      `${INV}${CC}${BB}  换厂${" ".repeat(6)}${RR}`,
+    ]);
+    // 同内容未选(sel=1 双行表):行1 = C9 头 + DIM 段自闭折行,行2 = 两空格缩进 + DIM 重开。
+    const uns = selectListLines(
+      [
+        { title: "/model", desc: "切换厂" },
+        { title: "x", desc: "" },
+      ],
+      12,
+      1,
+      5,
+    );
+    expect(uns[0]).toBe(`  ${BB}/model${RR} ${DD}切${RR}${" ".repeat(1)}`);
+    expect(uns[1]).toBe(`  ${DD}换厂${RR}${" ".repeat(6)}`);
+    expect(uns[2]).toBe(`${INV}${CC}${BB}● x${" ".repeat(9)}${RR}`); // 行2 = 选中带(● x vw3 → pad 9)
+    // 视口行预算吃折行:每物理行 vw 恒 = w,总行 ≤ maxRows。
+    const wide = selectListLines([{ title: "/m", desc: "中中中中中中中" }], 10, 0, 2);
+    expect(wide.every((l) => vw(l) === 10)).toBe(true);
+    expect(wide.length).toBeLessThanOrEqual(2);
+  });
+  it("renderView 接线:底线下方逐行画选列(sel=0 带在首);零候选画无匹配行且吃 body 预算", () => {
+    const ls = renderView(
+      view({ completion: { items: [{ title: "/co", desc: "压" }], sel: 0 } }),
+    ).split("\n");
+    expect(ls[7]).toBe("─".repeat(60)); // 输入框底线不动
+    expect(ls[8]!.startsWith(`${INV}${CC}${BB}${BULL} /co 压`)).toBe(true);
+    expect(vw(ls[8]!)).toBe(60);
+    // 无匹配:整屏 = 8 定盘 + 1 层行 = 9;60 条消息时 body 预算 20−4−1=15 → 头行 E45(顶栏滑走)。
+    const es: Entry[] = Array.from({ length: 60 }, (_, i) => ({
+      kind: "user" as const,
+      text: `E${i}`,
+    }));
+    const empty = renderView(
+      view({ entries: es, height: 20, completion: { items: [], sel: -1 } }),
+    ).split("\n");
+    expect(empty).toHaveLength(20);
+    expect(plain([empty[19]!])[0]!.trim()).toBe("无匹配");
+    expect(empty[0]).toContain("E45");
+    expect(empty.join("")).not.toContain(INV); // 高亮位不指任何行
   });
 });

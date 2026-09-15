@@ -3,7 +3,7 @@
 // 纯函数零状态零 I/O —— 键盘/重绘在 tui.ts,这里全部可自动测。
 // 制表/生僻符号一律 \uXXXX 转义:模型直接生成 ╭╯○‿ 类同形字符会漂移(原型期连错 5+ 次),转义源是纯 ASCII,稳。
 import type { AgentMessage, AssistantMessage } from "../loop/types.ts";
-import { B, CYAN, DIM, GREEN, RESET, YELLOW } from "./ansi.ts";
+import { B, CYAN, DIM, GREEN, INV, RESET, YELLOW } from "./ansi.ts";
 import { renderMarkdown } from "./markdown.ts";
 
 export { B }; // 重导出保对外面:历史 `import { B } from tui-view` 不破(依赖单向 tui-view → ansi)。
@@ -156,26 +156,66 @@ export function inputFrame(input: string, busy: boolean, width: number): string[
   ];
 }
 
-// ---- 补全弹层(C9:斜杠命令候选,渲染在输入框底线下方;候选数据在 commands.ts)----
-export interface CompletionItem {
-  name: string; // 不含 "/"
-  description: string;
-  highlighted: boolean; // 高亮位由 tui.ts 键盘态裁决,视图只画
+// ---- C16 通用选列(kilo DialogSelect 样式分级):补全弹层与 C17 connect 层共用 ----
+export interface SelectItem {
+  title: string; // 正文(含 "/名" 等前缀,渲染层不问)
+  desc: string; // 尾部灰说明
+  mark?: string; // 调用方注入的 gutter 符号(如 ✓ 已配)
 }
-export interface CompletionView {
-  items: CompletionItem[];
+export interface SelectView {
+  items: SelectItem[]; // 空表 = 无匹配行(不关层,kilo 语义)
+  sel: number; // 高亮下标由 tui.ts 键盘态裁决(−1 = 不指任何行),视图只画
 }
-// 每条一行、vw 截断到宽(不折行 = 不破 columns-1 的帧高契约);高亮行 ▸,风格零竖边框。
-export function completionLines(comp: CompletionView, w: number): string[] {
-  return comp.items.map((it) => {
-    const mark = it.highlighted ? `${B}▸${RESET}` : " ";
-    const head = `${mark} ${B}/${it.name}${RESET}`;
-    const desc = it.description ? trunc(it.description, Math.max(4, w - vw(head) - 1)) : "";
-    const line = desc === "" ? head : `${head} ${DIM}${desc}${RESET}`;
-    return pad(line, w);
+const BULL = String.fromCodePoint(0x25cf); // ●(码点构造防漂移,同 STAR 规约)
+// 选中行 = 整行反色横带(INV+CYAN+B 全带单一样式,pad 满宽在带内 → 覆写防旧帧残字);
+// 未选行逐字节 = C9 旧 completionLines 非高亮行(diff=0 锚)。超宽复用 wrapLines 自闭机折行、续行缩进对齐。
+// 视口:自 sel 交替扩到 maxRows 行(高亮恒中段 = 首移居中)。sel 恒 −1..len−1(空表配 −1,调用方钳好)。
+export function selectListLines(
+  items: SelectItem[],
+  w: number,
+  sel: number,
+  maxRows: number,
+): string[] {
+  // 零候选不关层(kilo No results found 语义):dim 一行占位,高亮不指任何行。
+  if (items.length === 0) return maxRows > 0 ? [pad(`  ${DIM}无匹配${RESET}`, w)] : [];
+  if (maxRows <= 0) return [];
+  // 一条目 = 一物理行组:复用 wrapLines 自闭机折到 w−2,首行 gutter 符号、续行两空格(缩进对齐 title 列)。
+  const wrapW = Math.max(4, w - 2);
+  const groups = items.map((it, i) => {
+    if (i === sel) {
+      const plainBody = `${it.title}${it.desc === "" ? "" : ` ${it.desc}`}`;
+      return wrapLines(plainBody, wrapW).map(
+        (l, k) =>
+          `${INV}${CYAN}${B}${k === 0 ? `${BULL} ` : "  "}${l}${" ".repeat(Math.max(0, w - 2 - vw(l)))}${RESET}`,
+      );
+    }
+    const head = `${B}${it.title}${RESET}`;
+    const styled = it.desc === "" ? head : `${head} ${DIM}${it.desc}${RESET}`;
+    const gut = it.mark ? `${GREEN}${it.mark}${RESET} ` : "  "; // 符号占第 1 列,选中行 ● 顶掉 mark
+    return wrapLines(styled, wrapW).map((l, k) => pad(`${k === 0 ? gut : "  "}${l}`, w));
   });
+  // 视口:自 sel 起下/上交替扩(按物理行数计,高亮恒中段 = 首移居中;贴边停,不多滑一行)。
+  let lo = sel;
+  let hi = sel;
+  let n = groups[sel]!.length;
+  let wantDown = true;
+  while (n < maxRows) {
+    const dOk = hi + 1 < groups.length && n + groups[hi + 1]!.length <= maxRows;
+    const uOk = lo > 0 && n + groups[lo - 1]!.length <= maxRows;
+    if ((wantDown && dOk) || (!wantDown && !uOk && dOk)) {
+      n += groups[++hi]!.length;
+    } else if (uOk) {
+      n += groups[--lo]!.length;
+    } else if (dOk) {
+      n += groups[++hi]!.length;
+    } else break;
+    wantDown = !wantDown;
+  }
+  return groups
+    .slice(lo, hi + 1)
+    .flat()
+    .slice(0, maxRows); // sel 组独行超预算时硬截(带首行 = sel 行,恒可见)
 }
-
 // ---- 整屏 ----
 export interface TuiView {
   modelId: string;
@@ -186,15 +226,15 @@ export interface TuiView {
   busy: boolean;
   width: number;
   height: number;
-  completion: CompletionView | null;
+  completion: SelectView | null;
   verbose: boolean; // C11:think 全文淡显(Ctrl+O 切);live 条目不受此字段影响,恒展开
 }
 // 顶栏并入滚动区:消息变长整体向下生长,超屏后顶栏随内容滑出("自动向上移动"手感),输入框钉底。
 // 行数 ≤ height(内容留尾 + 空 + 3 框),超界终端滚动会撕框。
 export function renderView(v: TuiView): string {
-  // 弹层封顶 = height 减去定盘(顶 4 + 空 1 + 框 3 + body 至少 1),超界候选不渲染(C9 AC-5)。
+  // 弹层封顶 = height 减去定盘(顶 4 + 空 1 + 框 3 + body 至少 1);无匹配行同吃此预算(C16 AC-4)。
   const comp = v.completion
-    ? completionLines(v.completion, v.width).slice(0, Math.max(0, v.height - 8))
+    ? selectListLines(v.completion.items, v.width, v.completion.sel, Math.max(0, v.height - 8))
     : [];
   const content = [
     ...headerLines(v.modelId, v.cwd, v.width),

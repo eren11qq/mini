@@ -316,10 +316,11 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 
 ### Acceptance criteria
 
-- [ ] 选中行逐字节含反色开闭序列且 pad 满宽、行自闭(RESET 收尾);非选中行零反色
-- [ ] `●`/`✓` gutter 各占 1 列、续行缩进对齐;无匹配行 dim 且高亮位不指任何行
-- [ ] C9 既有补全测试零回归(diff=0 锚保留,除「零候选收层」一例按新语义改写)
-- [ ] 整屏行数 ≤ height 契约不破(弹层预算公式同步吃 No-results 行)
+- [x] 选中行逐字节含反色开闭序列且 pad 满宽、行自闭(RESET 收尾);非选中行零反色
+- [x] `●`/`✓` gutter 各占 1 列、续行缩进对齐;无匹配行 dim 且高亮位不指任何行
+- [x] C9 既有补全测试零回归(diff=0 锚保留,除「零候选收层」一例按新语义改写)
+- [x] 整屏行数 ≤ height 契约不破(弹层预算公式同步吃 No-results 行)
+- 注(2026-09-16 TDD 落地):`selectListLines(items, w, sel, maxRows)` 纯函数面六测钉死;超宽走 wrapLines 折行(选中带每物理行满宽 INV..RESET 自闭、续行 2 列缩进对齐);视口自 sel 下/上交替扩 = 首移居中;未选行逐字节 = 旧 `completionLines` 非高亮行(diff=0 锚成立)。旧「▸/截断」两例视觉断言按新契约改写(结构锚全保:底线位、零竖线、行数封顶、超界不渲染、vw 满宽);`commands.test.ts` 零动。`ansi.ts` 新叶 `INV=\x1b[7m`(码点钉死)。tui.ts 键路由(零候选 Enter 落回整行提交、↑↓ 环绕)= 既有 W2 人工验缝,真机随 C17 抽验。
 
 ---
 
