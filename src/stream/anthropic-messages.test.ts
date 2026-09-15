@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createStream } from "./core.ts";
-import type { ProviderConfig, ProviderEvent, Transport } from "../loop/types.ts";
+import type { ProviderConfig, ProviderEvent, Transport } from "./protocol.ts";
 
 // AC-S3-2: thinking_delta 映射
 // Scenario:录制 anthropic SSE(含 thinking 块,脱敏)
@@ -179,7 +179,9 @@ describe("AC-SEAM-2/3/4/9 anthropic 请求体", () => {
           {
             name: "echo",
             description: "echo a path",
-            parameters: { type: "object", properties: { path: { type: "string" } } },
+            schema: { type: "object", properties: { path: { type: "string" } } },
+            // 方言只读声明不执行;假 run 兜底 = 误跑也只会回 error,不碰 fs。
+            run: async () => ({ content: [], isError: true }),
           },
         ],
       }))

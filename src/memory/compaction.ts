@@ -2,7 +2,8 @@
 // + 排空取文本。此前这段在 harness/cli.ts,与 summarize-prompt.ts、serialize.ts 三处撕开,且 cli.ts
 // 整文件 CI 不可见。SessionManager.compact 的签名不变(仍收 summarizeFn),本文件只提供生产用的那一份
 // 实现:注入 llm = StreamFn 形状(loop/stream 的既有缝),测试喂假流即零网络(S4 教条)。
-import type { AgentMessage, StreamFn } from "../loop/types.ts";
+import type { AgentMessage } from "../loop/types.ts";
+import type { StreamFn } from "../stream/protocol.ts";
 import { serializeConversation } from "./serialize.ts";
 import { buildSummarizePrompt } from "./summarize-prompt.ts";
 

@@ -1,7 +1,7 @@
 // T1 read 工具:seam = Tool 公共接口(types.ts:107)。
 // 语义(AC-T1-2):1-based offset,limit 行数;输出每行 `行号\t内容`(续读/edit 报得准行号)。
 import { readFile } from "node:fs/promises";
-import type { Tool, ToolResult } from "../loop/types.ts";
+import type { Tool, ToolResult } from "./tool.ts";
 
 // AC-T1-3:超长保尾截断,阈值 2000 行 / 50KB 先到者(DECISIONS T5)。
 // 返回体含首行截断提示(模型据此带 offset 重读)。

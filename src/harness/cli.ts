@@ -2,19 +2,21 @@
 // 停止判定、schema 校验、确认门规则、压缩全在 loop/stream/tools/memory 层;H2 的厂商
 // 选择/热切/会话挑选的裁决也全在纯缝里(parseArgs / resolveProvider / resolveModel /
 // SessionManager.list —— 均可测)。这里只做「读 flag → 选会话 → 拼参数 → 转事件 → 落盘」
-// 的搬运,唯一加工是 provider 工具形态映射(纯)。
+// 的搬运,零加工(卡 4:provider 工具形态映射已随 LoopContext.tools 敲实归方言)。
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { runLoop } from "../loop/run-loop.ts";
-import type { LoopContext, ProviderConfig, Tool, UserMessage } from "../loop/types.ts";
+import type { LoopContext, UserMessage } from "../loop/types.ts";
 import { makeSummarizeFn } from "../memory/compaction.ts";
 import { SessionManager } from "../memory/session-manager.ts";
 import { createStream } from "../stream/core.ts";
+import type { ProviderConfig } from "../stream/protocol.ts";
 import { bashTool } from "../tools/bash.ts";
 import { editTool } from "../tools/edit.ts";
 import { readTool } from "../tools/read.ts";
 import { writeTool } from "../tools/write.ts";
+import type { Tool } from "../tools/tool.ts";
 import { localDate } from "../util/time.ts";
 import { parseArgs } from "./args.ts";
 import { findProjectContext } from "./project-context.ts";
@@ -28,13 +30,6 @@ import { createPlainIO, createTui, type ChatIO } from "./tui.ts";
 const DEFAULT_ALIAS = "deepseek";
 
 const TOOLS: Tool[] = [readTool, writeTool, editTool, bashTool];
-
-// provider 侧要 {name, description, parameters};parameters 单源 = tool.schema,不抄第二份。
-const providerTools = TOOLS.map((t) => ({
-  name: t.name,
-  ...(t.description ? { description: t.description } : {}),
-  ...(t.schema ? { parameters: t.schema } : {}),
-}));
 
 // 密钥只从 env 读(PRD 约束)。缺 → 友好报错返回 false(启动缺 = 退出;热切缺 = 不切)。
 function ensureKey(io: ChatIO, provider: ProviderConfig): boolean {
@@ -139,7 +134,7 @@ async function main(): Promise<void> {
 
   const context: LoopContext = {
     messages: rebuilt.messages, // M2 rebuild 缝:接回所选会话历史
-    tools: providerTools,
+    tools: TOOLS,
   };
 
   // H3:/compact 手动 = force 跳阈值;自动 = 缺省阈值门(compact 内判,不过 → null 零副作用)。
@@ -207,7 +202,7 @@ async function main(): Promise<void> {
     // AC-H3-5:每轮从当前工具集重算 system prompt(纯函数零缓存 = 工具集变即重建)。
     // env 每轮现取(日期跨天热更新);仍走 opts,纯函数零状态不破。
     context.systemPrompt = buildSystemPrompt({
-      tools: providerTools,
+      tools: TOOLS,
       env: {
         platform: process.platform,
         date: localDate(), // 本地日期:toISOString 是 UTC,东八区晚 8 点后跨天错一天

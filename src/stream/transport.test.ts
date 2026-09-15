@@ -5,7 +5,7 @@ import {
   defaultTransport,
   withRetry,
 } from "./transport.ts";
-import type { Transport } from "../loop/types.ts";
+import type { Transport } from "./protocol.ts";
 
 // 锚点直测(ADR-003 Q6=A 的"下一独立 slice"):transport.ts 自 openai-completions.ts 提炼成
 // 网络侧叶子后,公开面 = TransportError / TRANSPORT_IDLE_TIMEOUT_MS / defaultTransport / withRetry。

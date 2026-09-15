@@ -10,10 +10,9 @@ import type {
   AgentMessage,
   AssistantMessage,
   LoopContext,
-  ProviderEvent,
-  StreamFn,
   UserMessage,
 } from "../loop/types.ts";
+import type { ProviderEvent, StreamFn } from "../stream/protocol.ts";
 
 // M1 seam:SessionManager({baseDir,cwd}) 公共边界(PRD S3:SessionManager(tempDir) 写读断言)。
 // 磁盘 jsonl = 唯一真相源;不断言私有字段内部。

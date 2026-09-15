@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createStream } from "./core.ts";
 import { TransportError } from "./transport.ts";
-import type { ProviderConfig, ProviderEvent, Transport } from "../loop/types.ts";
+import type { ProviderConfig, ProviderEvent, Transport } from "./protocol.ts";
 
 // AC-S2-2: 5xx 重试 1 次成功
 // Scenario:mock fetch 第 1 次 503、第 2 次 200+正常 SSE

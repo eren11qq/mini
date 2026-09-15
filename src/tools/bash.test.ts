@@ -4,7 +4,8 @@ import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runLoop } from "../loop/run-loop.ts";
-import type { AgentEvent, LoopContext, ProviderEvent, StreamFn } from "../loop/types.ts";
+import type { AgentEvent, LoopContext } from "../loop/types.ts";
+import type { ProviderEvent, StreamFn } from "../stream/protocol.ts";
 import { bashTool } from "./bash.ts";
 
 // T4 seam:bashTool via Tool.run(types.ts:110 公共接口)。进程表 = 唯一真相源。

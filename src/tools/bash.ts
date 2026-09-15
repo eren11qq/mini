@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Tool, ToolResult } from "../loop/types.ts";
+import type { Tool, ToolResult } from "./tool.ts";
 import { tailTruncate } from "./read.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;

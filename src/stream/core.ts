@@ -3,13 +3,8 @@
 // (AC-S3-3);调用方唯一变化 = import 落点从 openai-completions.ts 改为本文件。
 // 卡 1(ADR-003):dispatch 必须独立成文件且不被方言导入 —— 否则 core⇄方言 环 import 复活;
 // 共享物(salvage/transport)住叶子,方向只有 方言→叶子、core→{叶子,方言}。
-import type {
-  LoopContext,
-  ProviderConfig,
-  ProviderEvent,
-  StreamFn,
-  Transport,
-} from "../loop/types.ts";
+import type { LoopContext } from "../loop/types.ts";
+import type { ProviderConfig, ProviderEvent, StreamFn, Transport } from "./protocol.ts";
 import { defaultTransport, withRetry } from "./transport.ts";
 import { openaiStream } from "./openai-completions.ts";
 import { anthropicStream } from "./anthropic-messages.ts";

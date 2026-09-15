@@ -3,7 +3,8 @@
 // (run-loop.ts:73-76)。故 renderer 必须自己算后缀 —— 重打 = AC-H1-2「非整块」违。
 import { describe, expect, it } from "vitest";
 import { createRenderer } from "./renderer.ts";
-import type { AssistantMessage, ContentBlock, StopReason } from "../loop/types.ts";
+import type { AssistantMessage, StopReason } from "../loop/types.ts";
+import type { ContentBlock } from "../blocks.ts";
 
 function msg(content: ContentBlock[], stopReason: StopReason = "stop"): AssistantMessage {
   return { role: "assistant", content, stopReason };

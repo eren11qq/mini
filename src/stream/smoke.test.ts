@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createStream } from "./core.ts";
-import type { ProviderConfig, ProviderEvent } from "../loop/types.ts";
+import type { ProviderConfig, ProviderEvent } from "./protocol.ts";
 
 // AC-S4-1 验收句:deepseek 真实在线 smoke —— 持 DEEPSEEK_API_KEY 跑 createStream(默认 transport
 // = 真 fetch),收 ProviderEvent 流;断言 text_delta 与 toolcall_delta 均出现(模型真用工具)。
@@ -23,11 +23,13 @@ const deepseekReal: ProviderConfig = {
 const echoTool = {
   name: "echo",
   description: "Echo back the given path. Call this tool when the user asks to echo.",
-  parameters: {
+  schema: {
     type: "object",
     properties: { path: { type: "string", description: "path to echo" } },
     required: ["path"],
   },
+  // smoke 只收 ProviderEvent,从不执行工具;假 run 兜底 = 误跑也只回 error。
+  run: async () => ({ content: [], isError: true }),
 };
 
 describe("AC-S4-2 deepseek 在线 smoke", () => {

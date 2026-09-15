@@ -1,7 +1,7 @@
 // H2 S-a 缝:厂商配置行表(G3「厂商≠方言」/ PRD story 2「加厂商只加配置行」)。
 // 加一家 = PROVIDERS 加一行,零改代码。--model <alias> / model_change entry 都存 alias,
 // 由此表翻成完整 ProviderConfig(dialect 决定用哪个适配器)。密钥只从 env 读(key_env 指向)。
-import type { ProviderConfig } from "../loop/types.ts";
+import type { ProviderConfig } from "../stream/protocol.ts";
 
 export const PROVIDERS: Record<string, ProviderConfig> = {
   deepseek: {

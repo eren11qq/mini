@@ -157,3 +157,39 @@ typecheck 0 错；vitest 126 passed | 1 skipped（搬迁前后同数）；eslint
 - vitest 161 passed | 1 skipped（155 → +6）；typecheck 0 错；eslint 0 error（110 warning 未增）；prettier 干净。真机 `/compact` 人工演示 = 用户手动 `npm run cli`。
 
 沉淀一条规矩：**入口文件里「本文件零业务逻辑」这类自证注释，必须有 CI 可见性背书**；否则注释本身就是在报债 —— 要么把业务搬走，要么把文件纳入自动测试面。
+
+## ADR-005：拆 loop/types.ts god-hub，类型各归各缝，LoopContext.tools 敲实
+
+- 日期：2026-09-15
+- 状态：已采纳
+- 涉及文件：`src/blocks.ts`（新）、`src/stream/protocol.ts`（新）、`src/tools/tool.ts`（新）、`src/loop/types.ts`（瘦身 161→86 行）、23 个调用方 import 落点、双方言 tools 映射段、`cli.ts`（删 providerTools 预映射）
+
+### 背景
+
+架构评审（2026-09-15，候选 4 / Worth exploring）判定：`loop/types.ts` 161 行、24 文件 import，装着全部五层的类型词汇 —— 任何缝的契约变动（usage、signal、dfbc671 均留痕）都要动 loop 的文件，与「loop = 深模块、其余各管各缝」的所有权相反。`LoopContext.tools?: unknown[]` 是逃生舱：方言 `(t: any)` 鸭子 + cli 预映射 providerTools，一个 tool 三种表示。ADR-003 曾明文冻结此刀（「类型仍住 loop/types.ts，卡 4 处理」）。
+
+### 决策
+
+四个 seam 裁决由用户拍板（全按推荐），三家拆分 + 一叶子：
+
+- **`stream/protocol.ts`** = stream 缝契约：ProviderEvent、ModelDef、ProviderConfig、Transport、**StreamFn**（横跨两缝的函数形状归 stream 家，非 loop）。
+- **`tools/tool.ts`** = L2 注册表词汇：Tool、ToolResult（字段与注释逐字照迁）。
+- **`loop/types.ts`** 留 11 个自家符号：StopReason、messages 一族、Usage、LoopContext、RunLoopOptions、AgentEvent。**Usage 住 loop** 因 AssistantMessage 持有它，protocol 反向取用 —— 方向仍线性。
+- **`src/blocks.ts` 顶层叶子**（评审图未画、本刀必逼出的第五家）：blocks 留 loop/types 时,敲实 `tools: Tool[]` 即生环（loop→tools 取 Tool、tools→loop 取 TextBlock）。按 ADR-003「共享物住叶子」规矩独立成文件。方向锁：**protocol→loop→tools→blocks 线性，loop/types 绝不 import protocol/tools 之外的 stream 物**。
+- **敲实 `LoopContext.tools?: Tool[]`**：cli 的 providerTools 预映射块（6 行）整体删除，context 直传 TOOLS；wire 映射（schema→parameters / input_schema）迁入方言本体 —— 线格式本就是方言的事。字节等价由变异自查证明。
+- **落点一刀全改，loop/types 不留 re-export 门面**：god-hub 要死就死透，调用方 import 自己那家；typecheck 兜住每一处漏改。
+
+### 明确不做（本刀纪律）
+
+- 零新测（seam 裁决四）：纯类型搬迁无新行为,卡 1 同款锚 = typecheck + 例数不变 + 断言 diff 0,不冒充 TDD 红绿环。
+- 不搬 RunLoopOptions/AgentEvent（本就是 loop 自家出入契约）；createStream/compact 签名零动。
+- 手搓 expect-type 类型级断言被否：无依赖、无行为,纯维护成本。
+
+### 验证锚点
+
+- typecheck 0 错；vitest **161 passed | 1 skipped**（与卡 3 同数,断言字面量零动）；eslint 0 error、**warning 110→93**（`(t: any)` ×2 与其连坐的 no-unsafe 一族退场）；prettier 干净；27 文件 +82/−192。
+- 环证明升级：python 建全图（含测试文件）**56 文件 DFS cycles = NONE**，四契约文件出边 dump 与方向锁一致。
+- 契约逼出的真实修复：3 个方言测试 fixture 是「半个 Tool」（缺 run）→ 补 no-op `run`（误跑只回 error,不碰 fs）；fixture 键 `parameters`→`schema` = 输入形状跟注册表契约走,wire 断言未动。
+- 变异自查：方言映射键打回 `t.parameters` → openai/anthropic 各**恰好 1 例红**。踩坑记账：`git checkout` 复原把本刀两文件的落点+敲实一并打回 HEAD（checkout 只认提交,不认未入库切片）,重放 4 刀后全绿 —— 卡 3 教训升级:**uncommitted 文件永不可用 git 复原,变异前必须先 `cp` 备份或用 patch 片段逆打**。
+
+沉淀一条规矩：**类型 hub 与值 hub 同病** —— 所有权不同的契约符号同居一文件,任何一处变动 review 面就是全层并集；每个「临时共享 types.ts」都必须在缝定稿轮里把符号点齐名字分完家,否则「临时」就是永久。

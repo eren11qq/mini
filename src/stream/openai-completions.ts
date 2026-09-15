@@ -4,14 +4,8 @@
 // error 一律编码进流、不 throw(loop 层零 try/catch 约束)。
 // 卡 1(ADR-003)纯搬迁后本文件只留 openai 线格式:toOpenaiMessages + openaiStream;
 // transport/retry/salvage/派发器已迁 core.ts + transport.ts + salvage.ts,逻辑逐字未动。
-import type {
-  LoopContext,
-  ProviderConfig,
-  ProviderEvent,
-  StopReason,
-  Transport,
-  Usage,
-} from "../loop/types.ts";
+import type { LoopContext, StopReason, Usage } from "../loop/types.ts";
+import type { ProviderConfig, ProviderEvent, Transport } from "./protocol.ts";
 import { salvage } from "./salvage.ts";
 
 const FINISH_TO_STOP: Record<string, StopReason> = {
@@ -71,20 +65,20 @@ export function openaiStream(
     const url = `${config.base_url}/chat/completions`;
     const key = process.env[config.key_env] ?? "";
     const model = config.models[0]?.id ?? "";
-    // AC-S4-2 前置:context.tools → openai function-tool 数组(透传 name/description/parameters)。
+    // AC-S4-2 前置:注册表 Tool[] → openai function-tool 数组(卡 4:映射归方言,schema 直读)。
     // 缺省不发 tools 字段(空数组部分 API 拒收)。
     const body: Record<string, unknown> = {
       model,
       messages: toOpenaiMessages(context),
       stream: true,
     };
-    if (Array.isArray(context.tools) && context.tools.length > 0) {
-      body.tools = context.tools.map((t: any) => ({
+    if (context.tools && context.tools.length > 0) {
+      body.tools = context.tools.map((t) => ({
         type: "function",
         function: {
-          name: t?.name,
-          ...(t?.description ? { description: t.description } : {}),
-          ...(t?.parameters ? { parameters: t.parameters } : {}),
+          name: t.name,
+          ...(t.description ? { description: t.description } : {}),
+          ...(t.schema ? { parameters: t.schema } : {}),
         },
       }));
     }

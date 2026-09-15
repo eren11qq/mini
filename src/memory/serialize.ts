@@ -1,7 +1,8 @@
 // H3 S-c 纯缝:AgentMessage[] → `[role]` 行文本,供生产 summarizeFn 拼在
 // buildSummarizePrompt 之后(M4 注的"上层")。thinking 块丢 —— 内部推理不进纪要
 // (方言适配器回传 provider 时也丢它,口径一致)。isError 保标记:失败是被压缩历史的一部分。
-import type { AgentMessage, TextBlock } from "../loop/types.ts";
+import type { AgentMessage } from "../loop/types.ts";
+import type { TextBlock } from "../blocks.ts";
 
 const textOf = (blocks: TextBlock[]): string => blocks.map((b) => b.text).join(" ");
 

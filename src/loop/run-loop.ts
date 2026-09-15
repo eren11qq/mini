@@ -4,14 +4,11 @@ import type {
   AssistantMessage,
   LoopContext,
   RunLoopOptions,
-  StreamFn,
-  TextBlock,
-  Tool,
-  ToolCallBlock,
-  ToolResult,
   ToolResultMessage,
-  ThinkingBlock,
 } from "./types.ts";
+import type { TextBlock, ThinkingBlock, ToolCallBlock } from "../blocks.ts";
+import type { Tool, ToolResult } from "../tools/tool.ts";
+import type { StreamFn } from "../stream/protocol.ts";
 import { validateArgs } from "./validate.ts";
 import { appendRule, isValidSeed, loadRules, type Rule } from "./rules.ts";
 

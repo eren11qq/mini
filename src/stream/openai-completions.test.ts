@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createStream } from "./core.ts";
 import { TransportError } from "./transport.ts";
-import type { ProviderConfig, ProviderEvent, Transport } from "../loop/types.ts";
+import type { ProviderConfig, ProviderEvent, Transport } from "./protocol.ts";
 
 // AC-S1-2:协议映射
 // Scenario:录制一段 deepseek 真实 SSE(脱敏存 fixture)
@@ -240,7 +240,7 @@ describe("AC-S1-6 salvage 尽力解析", () => {
 });
 
 // AC-S4-2 前置:tools 序列化进请求体
-// Scenario:context.tools 含工具(name/description/parameters schema)
+// Scenario:context.tools 含注册表工具(name/description/schema)
 // Action:stream 经假 transport 回放,捕获 init.body
 // Expected:body.tools 为 openai function-tool 数组,透传 name/description/parameters
 //         context.tools 缺省 → body 不含 tools 字段(不发空数组)
@@ -256,11 +256,13 @@ describe("AC-S4-2 前置 tools 序列化进请求体", () => {
       {
         name: "echo",
         description: "echo a path",
-        parameters: {
+        schema: {
           type: "object",
           properties: { path: { type: "string" } },
           required: ["path"],
         },
+        // 方言只读声明不执行;假 run 兜底 = 误跑也只会回 error,不碰 fs。
+        run: async () => ({ content: [], isError: true }),
       },
     ];
     for await (const _ of streamFn({

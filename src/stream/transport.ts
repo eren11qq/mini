@@ -2,7 +2,7 @@
 // + withRetry(5xx/timeout 重试 1 次、4xx 即停;半截流不重放)。
 // 卡 1(ADR-003)自 openai-completions.ts 逐字搬入,行为不变;住叶子 = dispatch(core.ts)
 // import 两方言时不成环。假 transport 测试亦抛 TransportError 走同一路径。
-import type { Transport } from "../loop/types.ts";
+import type { Transport } from "./protocol.ts";
 
 // S2 retry 缝:TransportError 区分 5xx/timeout(重试)vs 4xx(透传不重试)。
 // defaultTransport 抛此型;假 transport 测试亦抛此型走同一路径。

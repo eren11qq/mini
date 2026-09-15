@@ -3,14 +3,8 @@
 // + 复用 salvage(salvage.ts)→ toolcall_delta。usage(input_tokens/output_tokens → prompt/completion)。
 // 与 openai 共用 Transport 缝 + withRetry(transport.ts),由 core.ts createStream 派发并统一包一层。
 // 卡 1(ADR-003):salvage 改从叶子导入,双方言互 import 的环已斩断。
-import type {
-  LoopContext,
-  ProviderConfig,
-  ProviderEvent,
-  StopReason,
-  Transport,
-  Usage,
-} from "../loop/types.ts";
+import type { LoopContext, StopReason, Usage } from "../loop/types.ts";
+import type { ProviderConfig, ProviderEvent, Transport } from "./protocol.ts";
 import { salvage } from "./salvage.ts";
 
 const STOP_TO_REASON: Record<string, StopReason> = {
@@ -86,12 +80,12 @@ export function anthropicStream(
       stream: true,
     };
     if (context.systemPrompt) body.system = context.systemPrompt;
-    // tools:同 openai 线的注册表形态 {name,description,parameters} → input_schema。缺省不发。
-    if (Array.isArray(context.tools) && context.tools.length > 0) {
-      body.tools = context.tools.map((t: any) => ({
-        name: t?.name,
-        ...(t?.description ? { description: t.description } : {}),
-        input_schema: t?.parameters ?? { type: "object", properties: {} },
+    // tools:注册表 Tool[] → anthropic input_schema(卡 4:映射归方言,schema 直读)。缺省不发。
+    if (context.tools && context.tools.length > 0) {
+      body.tools = context.tools.map((t) => ({
+        name: t.name,
+        ...(t.description ? { description: t.description } : {}),
+        input_schema: t.schema ?? { type: "object", properties: {} },
       }));
     }
     const init: RequestInit = {

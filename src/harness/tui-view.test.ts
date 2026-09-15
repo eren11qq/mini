@@ -13,7 +13,8 @@ import {
   wrapLines,
   type TuiView,
 } from "./tui-view.ts";
-import type { AssistantMessage, ContentBlock, StopReason } from "../loop/types.ts";
+import type { AssistantMessage, StopReason } from "../loop/types.ts";
+import type { ContentBlock } from "../blocks.ts";
 
 function asst(content: ContentBlock[], stopReason: StopReason = "stop"): AssistantMessage {
   return { role: "assistant", content, stopReason };

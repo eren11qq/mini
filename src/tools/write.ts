@@ -6,7 +6,7 @@
 // 工具层可 try/catch(loop 层零 try/catch 约束不含 src/tools/,同 read.ts/edit.ts)。
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { Tool, ToolResult } from "../loop/types.ts";
+import type { Tool, ToolResult } from "./tool.ts";
 
 // 每路径一条 promise 链:新任务挂到当前尾巴后面 → 落盘严格串行。
 const tails = new Map<string, Promise<unknown>>();

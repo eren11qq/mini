@@ -3,18 +3,13 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runLoop } from "../loop/run-loop.ts";
-import type {
-  AgentEvent,
-  LoopContext,
-  ProviderEvent,
-  StreamFn,
-  ToolResultMessage,
-} from "../loop/types.ts";
+import type { AgentEvent, LoopContext, ToolResultMessage } from "../loop/types.ts";
+import type { ProviderEvent, StreamFn } from "../stream/protocol.ts";
 import { readTool } from "./read.ts";
 import { editTool } from "./edit.ts";
 import { writeTool } from "./write.ts";
 import { stat } from "node:fs/promises";
-import type { Tool } from "../loop/types.ts";
+import type { Tool } from "./tool.ts";
 
 // T1 seam 2:注册表分发 = runLoop(streamFn, [readTool], ctx, opts) 公共入口。
 // AC-T1-2/3 的 read 经 toolCall 走通整链;AC-T1-4(T1 可测部分):无任何确认 gate,

@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type {
-  AgentMessage,
-  LoopContext,
-  ProviderEvent,
-  StreamFn,
-  UserMessage,
-} from "../loop/types.ts";
+import type { AgentMessage, LoopContext, UserMessage } from "../loop/types.ts";
+import type { ProviderEvent, StreamFn } from "../stream/protocol.ts";
 import { makeSummarizeFn } from "./compaction.ts";
 
 // 卡 3(ADR-004)锚点直测:「什么构成纪要」的配方从 harness 下沉 memory 缝。此前这段知识撕在
