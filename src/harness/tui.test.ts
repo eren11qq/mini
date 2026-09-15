@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { mapConfirm } from "./tui.ts";
+import { frameBytes, mapConfirm } from "./tui.ts";
+
+// C16 防叠框钉:帧写序列禁 2J(Windows Terminal 把每帧整屏滚进 scrollback = 连续框带),
+// 覆写全靠 home 顶格重写 + 帧尾 [J + renderView 行满宽 pad。
+describe("C16 frameBytes 帧写序列", () => {
+  it("home 起帧、帧尾 [J,全程不出现 2J", () => {
+    const s = frameBytes("", "BODY");
+    expect(s).toBe("\x1b[HBODY\x1b[0m\x1b[J");
+    expect(s).not.toContain("\x1b[2J");
+  });
+});
 
 // C6 AC-1/AC-5 键位侧:四档 1/2/3/4。旧三档映射(2=always)作废 —— session 档插进 2,
 // always 顺位到 3,no 到 4。TUI 与 plain 两条输入流共用本纯函数(唯一答案翻译点)。

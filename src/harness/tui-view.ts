@@ -204,7 +204,8 @@ export function renderView(v: TuiView): string {
   // 弹层占的尾行从消息体预算里扣(body 至少留 1 行,整屏恒 ≤ height)。
   const lines = content.slice(-Math.max(1, v.height - 4 - comp.length));
   lines.push("", ...inputFrame(v.input, v.busy, v.width), ...comp);
-  return lines.join("\n");
+  // 行满宽 pad:重绘不再用 2J(见 tui.ts),同物理行上一帧更宽时旧字会露;pad 到 width 逐格覆写。
+  return lines.map((l) => pad(l, v.width)).join("\n");
 }
 
 // ---- loop 数据 → 条目(历史重建 + 落定消息共用)----

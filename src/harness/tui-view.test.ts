@@ -100,12 +100,28 @@ describe("变体 A 定稿画面", () => {
     expect(lines[0]).toContain("mini");
     expect(lines[1]).toContain("test-model");
     expect(lines[2]).toContain("/tmp/x");
-    expect(lines[4]).toBe("");
+    expect(lines[4]).toBe(" ".repeat(60)); // C16 行满宽 pad:空行也覆写(防上一帧更宽时露旧字)
     // 输入框 = Claude Code 式纯横线(全宽、无竖边框)。码点转义防漂移。
     expect(lines[5]).toBe("─".repeat(60));
     expect(lines[6]).toContain(">");
     expect(lines[7]).toBe("─".repeat(60));
     expect(lines.slice(5, 8).join("")).not.toContain("│"); // 框区零竖线(LOGO 的 │ 不算)
+  });
+  it("C16 防叠框:重绘弃 2J → 每行满宽覆写(vw=width)且行数 ≤ height", () => {
+    // Windows Terminal 把 2J 存进 scrollback = 连续叠框根因;弃用后残字防线 = 行满宽 pad。
+    const es: Entry[] = [
+      { kind: "bot", text: "短" },
+      { kind: "user", text: "一条很长的消息".repeat(6) },
+    ];
+    for (const v of [
+      view({}),
+      view({ entries: es, busy: true }),
+      view({ entries: es, verbose: true }),
+    ]) {
+      const ls = renderView(v).split("\n");
+      expect(ls.length).toBeLessThanOrEqual(20);
+      for (const l of ls) expect(vw(l)).toBe(60); // 逐行顶满:窄帧接宽帧也不露旧字
+    }
   });
   it("消息流超屏:顶栏随内容滑出,输入框钉底,行数 = height 封顶", () => {
     const entries = Array.from({ length: 60 }, (_, i) => ({
@@ -176,7 +192,11 @@ describe("变体 A 定稿画面", () => {
   });
   it("C11:renderView 认 verbose —— live think 恒展开,message_end 落定即收一行,verbose 全展开", () => {
     const m = asst([{ type: "thinking", text: "一二\n三四" }]);
-    const body = (s: string): string[] => plain(s.split("\n")).slice(4, -4); // 去顶栏 4 行 + 空 1 + 框 3
+    // 去顶栏 4 行 + 空 1 + 框 3;行尾 pad 空格剥掉再比内容(C16 满宽覆写是帧层行为,不关内容断言)。
+    const body = (s: string): string[] =>
+      plain(s.split("\n"))
+        .slice(4, -4)
+        .map((l) => l.replace(/ +$/, ""));
     expect(body(renderView(view({ live: liveEntry(m), verbose: false })))).toEqual([
       "  一二",
       "  三四",

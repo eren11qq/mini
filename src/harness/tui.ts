@@ -37,6 +37,11 @@ export interface ChatIO {
   onInterrupt(cb: () => void): void;
 }
 
+// 帧写序列(纯函数,tui.test 钉死):home 顶格重写 + 帧尾 [J。禁 2J —— Windows Terminal 将其
+// 解释为"整屏滚进 scrollback 再清",每帧存档 = 连续叠框(本次回归的根因)。
+export const frameBytes = (probe: string, body: string): string =>
+  `\x1b[H${probe}${body}\x1b[0m\x1b[J`;
+
 // C6 四档键位映射:1/y/yes=一次性、2=session、3/always*=落盘、其余=拒。
 // 旧三档的 2=always 作废(session 插位,always 顺位 3);拒时"其余皆拒"的兜底语义不变。
 export function mapConfirm(answer: string): ConfirmAnswer {
@@ -125,7 +130,9 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
         completion: compView(),
         verbose,
       };
-      // 帧尾 \x1b[J:内容顶对齐、帧高可变,抹掉比上一帧矮时的残底。
+      // 零 \x1b[2J:Windows Terminal 把 2J 解释成"整屏滚进 scrollback 再清",每帧存档 = 连续叠框。
+      // 帧恒 ≤ rows 行,home + 顶格重写即可覆盖;帧尾 \x1b[J 抹比上一帧矮时的残底;
+      // 窄行残字由 renderView 行满宽 pad 防(见 tui-view 同批改动)。
       // C13 临时探针(MINI_PROBE=1 才画,定位完即删):c=上报列 r=上报行 h=帧逻辑行(未折) maxvw=帧内最宽行。
       // 判读:c > 窗口真实可视宽 ⇒ SIGWINCH 未达/WSL 桥虚报;maxvw ≥ c ⇒ 我方超宽 bug;
       //       maxvw < c 仍折行 ⇒ 终端把模糊宽度字符(─ ▸ ⚠ ✻)画成双宽。探针行自身 +1 帧高,属诊断行为。
@@ -136,7 +143,7 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
             return `${DIM}[probe] c=${process.stdout.columns} r=${process.stdout.rows} h=${ls.length} maxvw=${Math.max(0, ...ls.map(vw))}${RESET}\n`;
           })()
         : "";
-      process.stdout.write(`\x1b[H\x1b[2J${probe}${body}\x1b[0m\x1b[J`);
+      process.stdout.write(frameBytes(probe, body));
     });
   };
   const submit = (): void => {
