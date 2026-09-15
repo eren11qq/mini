@@ -4,7 +4,7 @@
 
 **技术事实(从仓库核实)**:node v24 直跑 .ts 无构建;`npm test` = vitest run;`npm run typecheck` = tsc --noEmit;src/ 目前仅占位 index.ts+index.test.ts。离线测试用录制的真实 SSE fixture(合成/脱敏);在线 smoke 单独 tag、默认不跑、需 env 密钥。harness 无自动测试 → 人工演示为验证法。
 
-**产品/业务约束(来自 PRD,非从代码推断)**:v1 = 1:1 复刻 pi + 安全件;maxTurns=50 唯一故意偏离;密钥只 env;deepseek 直连主粮、relay qwen 第二口粮(两条线不稳是 feature)。
+**产品/业务约束(来自 PRD,非从代码推断)**:v1 = 1:1 复刻 pi + 安全件;maxTurns=50 唯一故意偏离;密钥 env 优先 + 0600 落盘兜底(C15 修订,原「只 env」);deepseek 直连主粮、relay qwen 第二口粮(两条线不稳是 feature)。
 
 依赖链:loop(L1–L3)先;stream(S1–S4)与 tools(T1–T4)与 memory 前段(M1–M2)在 L3 后并行;memory 后段(M3–M4)需 S1 usage 计数;harness(H1–H3)最后。同层内按序号顺序。
 
@@ -186,13 +186,13 @@
 - Verification:vitest — 断言 done.usage 与 fixture 对齐
 - Priority:Required
 
-### AC-S1-4: 密钥只 env
+### AC-S1-4: 密钥源 = env 优先、0600 store 兜底(C15 修订,原「密钥只 env」)
 
 - Scenario:config.key_env="DEEPSEEK_API_KEY"
 - Action:stream
-- Expected:从 process.env 读取;不在 config/仓库文件留密钥值
-- Must not:任何源文件或 fixture 含真实密钥(grep `sk-`/`DEEPSEEK_API_KEY=` 赋值零命中)
-- Verification:`npm run format:check`+grep;fixture 用合成 key 占位
+- Expected:第一源 process.env;缺 → `~/.mini/keys.json`(alias→key,0600,`/model <alias> <key>` 写)兜底;cli 合流后回填 env(`??=` 只补缺),适配器仍逐请求读 key_env,下游零改动;不在 config/仓库文件留密钥值
+- Must not:任何源文件或 fixture 含真实密钥(grep `sk-`/`DEEPSEEK_API_KEY=` 赋值零命中);keys.json 住 HOME 不进仓库;警告/提示不回显 key 本体
+- Verification:vitest(keys.ts resolveKey/loadKeys/saveKey 含 mode 0600 断言)+`npm run format:check`+grep;fixture 用合成 key 占位
 - Priority:Required
 
 ### AC-S1-5: 厂商配置行换厂商

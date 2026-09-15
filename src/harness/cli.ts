@@ -20,6 +20,7 @@ import { writeTool } from "../tools/write.ts";
 import type { Tool } from "../tools/tool.ts";
 import { localDate } from "../util/time.ts";
 import { parseArgs } from "./args.ts";
+import { loadKeys, resolveKey, saveKey } from "./keys.ts";
 import { findProjectContext } from "./project-context.ts";
 import { resolveProvider } from "./providers.ts";
 import { resolveModel } from "./resolve-model.ts";
@@ -33,10 +34,24 @@ const DEFAULT_ALIAS = "deepseek";
 
 const TOOLS: Tool[] = [readTool, writeTool, editTool, bashTool];
 
-// 密钥只从 env 读(PRD 约束)。缺 → 友好报错返回 false(启动缺 = 退出;热切缺 = 不切)。
-function ensureKey(io: ChatIO, provider: ProviderConfig): boolean {
-  if (process.env[provider.key_env]) return true;
-  io.warn(`${provider.key_env} 未设置(密钥只从 env 读)。`);
+// C15 密钥来源 = env > 0600 落盘 store(~/.mini/keys.json,`/model <alias> <key>` 写盘)。
+// 合流后回填 process.env[key_env](只补缺不覆盖 env 原值)= stream 适配器逐请求读 env,下游零改动。
+// 缺不再硬退:返回 false + warn 进帧。启动缺 = REPL 照常(发送门拦轮),热切缺 = 不切。
+const KEYS_PATH = join(homedir(), ".mini", "keys.json");
+async function ensureKey(io: ChatIO, alias: string, provider: ProviderConfig): Promise<boolean> {
+  const k = resolveKey({
+    alias,
+    keyEnv: provider.key_env,
+    env: process.env,
+    store: await loadKeys(KEYS_PATH),
+  });
+  if (k !== undefined) {
+    process.env[provider.key_env] ??= k;
+    return true;
+  }
+  io.warn(
+    `未配置 ${alias} 的 API key:/model ${alias} <api-key> 落盘,或 export ${provider.key_env}。`,
+  );
   return false;
 }
 
@@ -124,10 +139,8 @@ async function main(): Promise<void> {
     process.exit(1);
     return;
   }
-  if (!ensureKey(io, provider)) {
-    io.stop();
-    process.exit(1);
-  }
+  // C15:启动缺 key 不再 stop+exit(TUI 帧未画即退 = 零反应秒退的根);warn 已入帧可见,REPL 照常,发送门拦轮。
+  await ensureKey(io, alias, provider);
   // 启动即定厂商:仅当 --model 覆盖了续会话的历史 model 才落 model_change(默认/纯恢复 = 噪音,不写)。
   if (args.model && args.model !== rebuilt.model) {
     session.append({ type: "model_change", payload: { model: alias } });
@@ -172,29 +185,37 @@ async function main(): Promise<void> {
 
   // 会话内热切(AC-H2-3):/model <alias> → 校验+换 provider+落 model_change entry。
   // 只换下一条消息起生效;坏 alias / 缺密钥 → 保持原厂商、不污染 jsonl。
-  const switchModel = (next: string): void => {
-    if (next === "") {
-      io.note("用法:/model <alias>");
+  // C15:/model <alias> [api-key] —— 带 key = 校验 alias 后 saveKey 落盘(0600),再走同一条校验切换路;
+  // 不带 = 只查 env/已存盘。key 参数全程不回显(警告/提示只出现 alias)。
+  const switchModel = async (rest: string): Promise<void> => {
+    const sp = rest.indexOf(" ");
+    const name = sp < 0 ? rest : rest.slice(0, sp);
+    const key = sp < 0 ? "" : rest.slice(sp + 1).trim();
+    if (name === "") {
+      io.note("用法:/model <alias> [api-key]");
       return;
     }
+    let np: ProviderConfig;
     try {
-      const np = resolveProvider(next); // S-a:未知 alias 抛(消息含可选厂商)
-      if (!ensureKey(io, np)) return; // 缺密钥不切,保留原厂商
-      alias = next;
-      provider = np;
-      streamFn = createStream(provider);
-      session.append({ type: "model_change", payload: { model: alias } });
-      io.setModel(provider.models[0]!.id); // 顶栏第二行跟着热切走。
-      io.note(`已切换 → ${alias} (${provider.models[0]!.id})`);
+      np = resolveProvider(name); // S-a:未知 alias 抛(消息含可选厂商)
     } catch (e) {
       io.warn(`${(e as Error).message}`);
+      return;
     }
+    if (key !== "") await saveKey(KEYS_PATH, name, key);
+    if (!(await ensureKey(io, name, np))) return; // 缺密钥不切,保留原厂商
+    alias = name;
+    provider = np;
+    streamFn = createStream(provider);
+    session.append({ type: "model_change", payload: { model: alias } });
+    io.setModel(provider.models[0]!.id); // 顶栏第二行跟着热切走。
+    io.note(`已切换 → ${alias} (${provider.models[0]!.id})`);
   };
 
   // C9 登记(晚绑定补齐):分发段只查表,不认具体命令。
   COMMANDS.push(
     { name: "compact", description: "手动压缩上下文", run: () => runCompact(true) },
-    { name: "model", description: "切换厂商模型", usage: "<alias>", run: switchModel },
+    { name: "model", description: "切换厂商模型", usage: "<alias> [api-key]", run: switchModel },
   );
 
   if (io.mode === "plain") io.note(`mini · ${alias} (${provider.models[0]!.id}) · ${cwd}`);
@@ -214,6 +235,9 @@ async function main(): Promise<void> {
       await hit.command.run(hit.args);
       continue;
     }
+
+    // C15 发送门:当前厂商无 key(env+盘全缺)→ warn 拦下,不空 key 打 API。
+    if (!(await ensureKey(io, alias, provider))) continue;
 
     const user: UserMessage = { role: "user", content: line };
     context.messages.push(user);

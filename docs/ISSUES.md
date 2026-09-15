@@ -3,7 +3,7 @@
 本地 tracker。源 = 2026-09-15 设计对话(plan: confirm 系统分层流水线)。
 目标:弹窗从"每次工具调用"降为"仅未预批且非只读的边界动作",同时堵复合命令越权洞。
 分层顺序(所有片共同遵守):工具分级 → 参数解析 → 危险黑名单 → allow 判定(内置只读表 + rules)→ 弹窗兜底。
-合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。
+合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。C15(/model 自配 key)= PRD 翻案卡,独立于 C10-C14 链,2026-09-15 插队先做。
 
 ---
 
@@ -274,6 +274,23 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 
 ### Acceptance criteria
 
-- [ ] origin/main 与本地对齐(不含工作区未提交改动)
+- [x] origin/main 与本地对齐(不含工作区未提交改动)—— 2026-09-15 win git + gh credential-helper push `1f2921e..3d106a7`(另会话随后叠 `c1f427e` docs),gh api 验远端 tip 与本地 rev-list=0;发货门前在 3d106a7 独立 worktree 跑全仓 = 283 passed
 - [ ] 重跑 install 后真机 `mini` 出 `/` 弹层、/compact 走注册表分发
-- [ ] 另一会话的 bash.ts/bash.test.ts 原样未动
+- [x] 另一会话的 bash.ts/bash.test.ts 原样未动 —— push 只推 commit;其 WIP 后由该会话自行提交(`3d106a7`),未混入本刀
+
+---
+
+## C15 — /model 自配 API key + 缺 key 启动不死
+
+**Type**: HITL(密钥策略改 PRD,用户拍板) · **Blocked by**: 无(翻案 DECISIONS S4 / plan AC-S1-4「密钥只 env」)
+
+### What to build
+
+用户诉求:开 `mini` 即可用 `/model` 现场配 key、选模型,不再被 env 前置卡死。三刀:① 纯叶 `harness/keys.ts` = `resolveKey`(env 优先、0600 store 兜底)+ `loadKeys`(缺/坏降级空表)+ `saveKey`(合并写,tmp 创建期 0600 → rename 原子换);② cli 启动解耦:缺 key 不再 stop+exit(根治 C13 附带发现的「零反应秒退」),warn 入帧 + 发送门拦轮;③ `/model <alias> [key]`:带 key = 验 alias 后落盘再切,key 全程不回显;密钥住 `~/.mini/keys.json`,仓库零接触。下游适配器零改动(cli 合流后 `??=` 回填 env)。
+
+### Acceptance criteria
+
+- [x] keys.ts 四测绿:env 缺 store 兜底 / 两源 env 赢 / loadKeys 缺坏降级 / saveKey 合并 + `mode&0777==0600`
+- [x] 离线端到端(隔离 HOME,慢喂管道):无 key 启动 warn 可见不退;发消息被发送门拦下;`/model qwen <key>` 落盘切换;无 key 换 `/model glm` 拒绝保原厂商;新进程 `/model qwen` 不带 key 命中 store 兜底
+- [x] PRD 同步:plan.md 第 7 行 + AC-S1-4 改写、DECISIONS S4 打 ★ 修订
+- [ ] 真机(TUI):`mini` 直开 → `/model qwen sk-xxx` 切换成功 → 重启 `/model qwen` 即复用(用户验后勾)

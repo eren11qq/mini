@@ -26,14 +26,14 @@
 
 ## ① stream
 
-| #   | 决策                                                                                                                                   |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| S1  | 首发 openai-completions 方言 → deepseek-chat(2026-09-13 实测 200 + tool_calls 流正常)                                                  |
-| S2  | 第二适配器 anthropic-messages → qwen3.8-flash 经 token-plan relay(实测 /v1/messages 可用、吐 thinking;该 relay 无 openai 端点、曾 403) |
-| S3  | dashscope openai 端点实测 401(openclaude 的 key 已过期),不作为依赖                                                                     |
-| S4  | 密钥只从 env 读;配置 {dialect, base_url, key_env, models[]}                                                                            |
-| S5  | 重试:5xx/超时自动 1 次;4xx 即停显示原因                                                                                                |
-| S6  | ◇ toolcall 参数流式 salvage 解析;截断定稿整批拒执(照抄 pi)                                                                             |
+| #   | 决策                                                                                                                                                                                                 |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1  | 首发 openai-completions 方言 → deepseek-chat(2026-09-13 实测 200 + tool_calls 流正常)                                                                                                                |
+| S2  | 第二适配器 anthropic-messages → qwen3.8-flash 经 token-plan relay(实测 /v1/messages 可用、吐 thinking;该 relay 无 openai 端点、曾 403)                                                               |
+| S3  | dashscope openai 端点实测 401(openclaude 的 key 已过期),不作为依赖                                                                                                                                   |
+| S4  | ★ 密钥源(C15 修订 2026-09-15,原「只从 env」):env 优先 → ~/.mini/keys.json(0600,`/model <alias> <key>` 落盘)兜底;cli 合流回填 env,适配器仍读 key_env;配置 {dialect, base_url, key_env, models[]} 不变 |
+| S5  | 重试:5xx/超时自动 1 次;4xx 即停显示原因                                                                                                                                                              |
+| S6  | ◇ toolcall 参数流式 salvage 解析;截断定稿整批拒执(照抄 pi)                                                                                                                                           |
 
 ## ② tools
 
