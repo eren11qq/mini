@@ -29,6 +29,7 @@ function view(partial: Partial<TuiView>): TuiView {
     busy: false,
     width: 60,
     height: 20,
+    completion: null,
     ...partial,
   };
 }
@@ -88,6 +89,40 @@ describe("变体 A 定稿画面", () => {
   it("busy 时输入行挂运行提示", () => {
     const lines = renderView(view({ busy: true })).split("\n");
     expect(lines[6]).toContain("Ctrl+C");
+  });
+  it("补全弹层:输入框底线下方逐行渲染,高亮行带 ▸,零竖边框", () => {
+    const lines = renderView(
+      view({
+        input: "/co",
+        completion: {
+          items: [
+            { name: "compact", description: "手动压缩上下文", highlighted: true },
+            { name: "config", description: "配置", highlighted: false },
+          ],
+        },
+      }),
+    ).split("\n");
+    expect(lines[7]).toBe("─".repeat(60)); // 输入框底线
+    expect(lines[8]).toContain("▸");
+    expect(lines[8]).toContain("/compact");
+    expect(lines[8]).toContain("手动压缩上下文");
+    expect(lines[9]).not.toContain("▸");
+    expect(lines[9]).toContain("/config");
+    expect(lines.slice(8).join("")).not.toContain("│"); // 弹区零竖线,同框风格
+  });
+  it("窄窗:弹层每行 vw ≤ width(截断不折行);多命令超界:整屏 ≤ height,弹层封顶", () => {
+    const items = Array.from({ length: 6 }, (_, i) => ({
+      name: `cmd${i}`,
+      description: `说明${"一".repeat(20)}`,
+      highlighted: i === 0,
+    }));
+    const narrow = renderView(view({ width: 16, completion: { items } })).split("\n");
+    for (const l of narrow.slice(8)) expect(vw(l)).toBeLessThanOrEqual(16); // 只管弹层区(顶栏超宽是既有行为,C9 外)
+    const short = renderView(view({ height: 10, completion: { items } })).split("\n");
+    expect(short.length).toBeLessThanOrEqual(10);
+    expect(short[8]).toContain("▸"); // 底线后前两行仍是弹层
+    expect(short[9]).toContain("cmd1");
+    expect(short.join("\n")).not.toContain("cmd5"); // 超界的候选不渲染
   });
   it("entryLines:首行带符号,续行两空格缩进", () => {
     const lines = entryLines({ kind: "bot", text: "一二三四五六七八" }, 10);

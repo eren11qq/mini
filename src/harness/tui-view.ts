@@ -121,6 +121,26 @@ export function inputFrame(input: string, busy: boolean, width: number): string[
   ];
 }
 
+// ---- 补全弹层(C9:斜杠命令候选,渲染在输入框底线下方;候选数据在 commands.ts)----
+export interface CompletionItem {
+  name: string; // 不含 "/"
+  description: string;
+  highlighted: boolean; // 高亮位由 tui.ts 键盘态裁决,视图只画
+}
+export interface CompletionView {
+  items: CompletionItem[];
+}
+// 每条一行、vw 截断到宽(不折行 = 不破 columns-1 的帧高契约);高亮行 ▸,风格零竖边框。
+export function completionLines(comp: CompletionView, w: number): string[] {
+  return comp.items.map((it) => {
+    const mark = it.highlighted ? `${B}▸${RESET}` : " ";
+    const head = `${mark} ${B}/${it.name}${RESET}`;
+    const desc = it.description ? trunc(it.description, Math.max(4, w - vw(head) - 1)) : "";
+    const line = desc === "" ? head : `${head} ${DIM}${desc}${RESET}`;
+    return pad(line, w);
+  });
+}
+
 // ---- 整屏 ----
 export interface TuiView {
   modelId: string;
@@ -131,16 +151,22 @@ export interface TuiView {
   busy: boolean;
   width: number;
   height: number;
+  completion: CompletionView | null;
 }
 // 顶栏并入滚动区:消息变长整体向下生长,超屏后顶栏随内容滑出("自动向上移动"手感),输入框钉底。
 // 行数 ≤ height(内容留尾 + 空 + 3 框),超界终端滚动会撕框。
 export function renderView(v: TuiView): string {
+  // 弹层封顶 = height 减去定盘(顶 4 + 空 1 + 框 3 + body 至少 1),超界候选不渲染(C9 AC-5)。
+  const comp = v.completion
+    ? completionLines(v.completion, v.width).slice(0, Math.max(0, v.height - 8))
+    : [];
   const content = [
     ...headerLines(v.modelId, v.cwd, v.width),
     ...entriesToLines(v.live ? [...v.entries, v.live] : v.entries, v.width),
   ];
-  const lines = content.slice(-Math.max(1, v.height - 4));
-  lines.push("", ...inputFrame(v.input, v.busy, v.width));
+  // 弹层占的尾行从消息体预算里扣(body 至少留 1 行,整屏恒 ≤ height)。
+  const lines = content.slice(-Math.max(1, v.height - 4 - comp.length));
+  lines.push("", ...inputFrame(v.input, v.busy, v.width), ...comp);
   return lines.join("\n");
 }
 

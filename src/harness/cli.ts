@@ -23,6 +23,7 @@ import { findProjectContext } from "./project-context.ts";
 import { resolveProvider } from "./providers.ts";
 import { resolveModel } from "./resolve-model.ts";
 import { buildSystemPrompt } from "./system-prompt.ts";
+import { matchCommand, type SlashCommand } from "./commands.ts";
 import { createPlainIO, createTui, type ChatIO } from "./tui.ts";
 
 // 出厂厂商(无 --model、无历史 model_change 时)。--model <alias> 与 model_change payload
@@ -73,9 +74,15 @@ async function main(): Promise<void> {
   const baseDir = join(homedir(), ".mini", "sessions");
   const cwd = process.cwd();
 
+  // C9 命令注册表:TUI 补全与主循环分发共读这张表;handler 闭包晚绑定(runCompact 等在其后定义),
+  // 故先建空数组、到齐再 push —— 加命令 = 只登记,分发段零改动。
+  const COMMANDS: SlashCommand[] = [];
+
   // P2 聊天框缝:TTY = 全屏 TUI(变体 A);非 TTY/管道 = 旧 H1 readline 通道,行为零变。
   const io: ChatIO =
-    process.stdout.isTTY && process.stdin.isTTY ? createTui({ cwd }) : createPlainIO();
+    process.stdout.isTTY && process.stdin.isTTY
+      ? createTui({ cwd, commands: COMMANDS })
+      : createPlainIO();
   io.start();
 
   // Story 16:Ctrl+C = 中断在跑的那一轮(stream + 工具),空转时 = 退出。
@@ -159,6 +166,33 @@ async function main(): Promise<void> {
     }
   };
 
+  // 会话内热切(AC-H2-3):/model <alias> → 校验+换 provider+落 model_change entry。
+  // 只换下一条消息起生效;坏 alias / 缺密钥 → 保持原厂商、不污染 jsonl。
+  const switchModel = (next: string): void => {
+    if (next === "") {
+      io.note("用法:/model <alias>");
+      return;
+    }
+    try {
+      const np = resolveProvider(next); // S-a:未知 alias 抛(消息含可选厂商)
+      if (!ensureKey(io, np)) return; // 缺密钥不切,保留原厂商
+      alias = next;
+      provider = np;
+      streamFn = createStream(provider);
+      session.append({ type: "model_change", payload: { model: alias } });
+      io.setModel(provider.models[0]!.id); // 顶栏第二行跟着热切走。
+      io.note(`已切换 → ${alias} (${provider.models[0]!.id})`);
+    } catch (e) {
+      io.warn(`${(e as Error).message}`);
+    }
+  };
+
+  // C9 登记(晚绑定补齐):分发段只查表,不认具体命令。
+  COMMANDS.push(
+    { name: "compact", description: "手动压缩上下文", run: () => runCompact(true) },
+    { name: "model", description: "切换厂商模型", usage: "<alias>", run: switchModel },
+  );
+
   if (io.mode === "plain") io.note(`mini · ${alias} (${provider.models[0]!.id}) · ${cwd}`);
   if (projectContext) io.note(`项目上下文:${projectContext.path}`);
 
@@ -166,32 +200,11 @@ async function main(): Promise<void> {
     const line = (await io.ask()).trim();
     if (line === "") continue;
 
-    // 会话内热切(AC-H2-3):/model <alias> → 校验+换 provider+落 model_change entry。
-    // 只换下一条消息起生效;坏 alias / 缺密钥 → 保持原厂商、不污染 jsonl。
-    if (line === "/model" || line.startsWith("/model ")) {
-      const next = line.slice("/model".length).trim();
-      if (next === "") {
-        io.note("用法:/model <alias>");
-        continue;
-      }
-      try {
-        const np = resolveProvider(next); // S-a:未知 alias 抛(消息含可选厂商)
-        if (!ensureKey(io, np)) continue; // 缺密钥不切,保留原厂商
-        alias = next;
-        provider = np;
-        streamFn = createStream(provider);
-        session.append({ type: "model_change", payload: { model: alias } });
-        io.setModel(provider.models[0]!.id); // 顶栏第二行跟着热切走。
-        io.note(`已切换 → ${alias} (${provider.models[0]!.id})`);
-      } catch (e) {
-        io.warn(`${(e as Error).message}`);
-      }
-      continue;
-    }
-
-    // H3 AC-H3-2:/compact = 手动压缩(force 跳阈值;切点/配对/拒压照旧在 memory)。
-    if (line === "/compact") {
-      await runCompact(true);
+    // C9:斜杠分发 = 查注册表(语义见 commands.ts;首 token 命中,余下 trim 作 args)。
+    // 未命中(含一切非 "/" 行)照旧走用户消息回喂流,H3 AC-H3-2 手动压缩即此表的 /compact 行。
+    const hit = matchCommand(COMMANDS, line);
+    if (hit) {
+      await hit.command.run(hit.args);
       continue;
     }
 

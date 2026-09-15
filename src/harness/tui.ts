@@ -4,6 +4,7 @@
 // loop/stream/memory 零改动;确认门/中断/落盘裁决仍全在 loop 与 cli 既有缝里。
 import { createInterface } from "node:readline";
 import type { AgentEvent, AgentMessage } from "../loop/types.ts";
+import { filterCommands, type SlashCommand } from "./commands.ts";
 import { createRenderer } from "./renderer.ts";
 import {
   entriesFromMessages,
@@ -11,6 +12,7 @@ import {
   previewArgs,
   previewResult,
   renderView,
+  type CompletionView,
   type Entry,
   type TuiView,
 } from "./tui-view.ts";
@@ -40,7 +42,7 @@ export function mapConfirm(answer: string): ConfirmAnswer {
   return "no";
 }
 
-export function createTui(opts: { cwd: string }): ChatIO {
+export function createTui(opts: { cwd: string; commands: readonly SlashCommand[] }): ChatIO {
   let modelId = "…";
   let entries: Entry[] = [];
   let live: Entry | null = null;
@@ -51,6 +53,38 @@ export function createTui(opts: { cwd: string }): ChatIO {
   let confirmWait: ((s: string) => void) | null = null;
   const pending: string[] = []; // busy 期按 ⏎ = 排队,本轮 main 回到 ask 立即领走
   let interrupt: (() => void) | null = null;
+  // C9 补全弹层 = 纯视图态:确认等待中/Esc 收起/非 "/" 行首 → 不出弹层;提交语义零改动。
+  let compSel = 0;
+  let compDismissed = false;
+  const popupItems = (): SlashCommand[] =>
+    confirmWait || compDismissed || !input.startsWith("/")
+      ? []
+      : filterCommands(opts.commands, input);
+  const popupOpen = (): boolean => popupItems().length > 0;
+  const acceptCompletion = (): void => {
+    const items = popupItems();
+    const it = items[Math.min(compSel, items.length - 1)];
+    if (!it) return;
+    input = `/${it.name}${it.usage ? " " : ""}`;
+    compSel = 0;
+    compDismissed = true; // 补全后收起:再按 Enter = 照常整行提交
+  };
+  const afterEdit = (): void => {
+    compDismissed = false; // 任何编辑重开弹层(退格过 "/" 由非 "/" 前缀自然收起)
+    compSel = 0;
+  };
+  const compView = (): CompletionView | null => {
+    const items = popupItems();
+    if (items.length === 0) return null;
+    const sel = Math.min(compSel, items.length - 1);
+    return {
+      items: items.map((c, i) => ({
+        name: c.name,
+        description: c.description,
+        highlighted: i === sel,
+      })),
+    };
+  };
 
   const restore = (): void => {
     process.stdout.write("\x1b[?25h\x1b[0m");
@@ -77,6 +111,7 @@ export function createTui(opts: { cwd: string }): ChatIO {
         busy,
         width,
         height,
+        completion: compView(),
       };
       // 帧尾 \x1b[J:内容顶对齐、帧高可变,抹掉比上一帧矮时的残底。
       process.stdout.write(`\x1b[H\x1b[2J${renderView(view)}\x1b[0m\x1b[J`);
@@ -85,6 +120,7 @@ export function createTui(opts: { cwd: string }): ChatIO {
   const submit = (): void => {
     const text = input.trim();
     input = "";
+    afterEdit();
     if (confirmWait) {
       const f = confirmWait;
       confirmWait = null;
@@ -131,10 +167,22 @@ export function createTui(opts: { cwd: string }): ChatIO {
             restore();
             process.exit(0);
           }
-        } else if (s === "\r" || s === "\n") submit();
-        else if (s === "\x7f" || s === "\b") input = input.slice(0, -1);
-        else if (s.startsWith("\x1b")) {
-          // 方向键/功能键转义序列:吞掉,别当字面量打进输入框。
+        } else if (s === "\t") {
+          if (popupOpen()) acceptCompletion(); // C9:Tab = 补全高亮项(无弹层时吞掉,同旧控制字符丢弃)
+        } else if (s === "\r" || s === "\n") {
+          if (popupOpen())
+            acceptCompletion(); // 弹层开:Enter=补全收起;弹层关:照旧整行提交(用户裁决)
+          else submit();
+        } else if (s === "\x7f" || s === "\b") {
+          input = input.slice(0, -1);
+          afterEdit();
+        } else if (s.startsWith("\x1b")) {
+          // Esc = 收起弹层(已输内容保留);↑/↓ 仅在弹层开时移高亮;其余转义照旧吞,别当字面量打进输入框。
+          const items = popupItems();
+          if (s === "\x1b") compDismissed = true;
+          else if (items.length > 0 && s === "\x1b[A")
+            compSel = (Math.min(compSel, items.length - 1) + items.length - 1) % items.length;
+          else if (items.length > 0 && s === "\x1b[B") compSel = (compSel + 1) % items.length;
         } else {
           const multi = s.length > 1; // 粘贴含换行 → 空格,不连发多条
           for (const c of s) {
@@ -145,6 +193,7 @@ export function createTui(opts: { cwd: string }): ChatIO {
             } else if (cp === 0x7f) input = input.slice(0, -1);
             else if (cp >= 0x20) input += c;
           }
+          afterEdit();
         }
         requestDraw();
       });
