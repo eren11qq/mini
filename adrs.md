@@ -112,3 +112,14 @@ H1~H3 交付的是裸 readline + 增量 stdout，操控体验差（无整体画�
 ### 验证锚点
 
 typecheck 0 错；vitest 126 passed | 1 skipped（搬迁前后同数）；eslint 0 error（110 warning = 原方言代码 any 等，逐字随迁）；prettier 干净；grep 证实 stream 目录零环。真机 deepseek 冒烟 = 用户手动 `npm run cli`（Q5-⑥）。
+
+### 后续（2026-09-15，Q6 slice 还债 + 卡 8 同路车）
+
+本 ADR 欠的两件已还，不另开 ADR：
+
+- `salvage.test.ts`（11 例）+ `transport.test.ts`（18 例）＝ 两叶子公开面锚点直测。最大盲区是 `defaultTransport` 此前**零直测**：真 fetch 路径的行切分、跨块多字节不乱码、`!ok` 分诊出 `status`、`body` 为 null、idle 超时产 `isTimeout`（story 8 判据，不再只有 mock 能造）、计时按 read 重装（累计 >idle 不误伤）、消费者暂停不算断流、外部 signal 中断不冒充 timeout。`withRetry` 补叶子版四剧本 + 半截流不重放 + `retries` 参数（2/0）。
+- 卡 8 正名：`retry.test.ts` → `core.test.ts`（`git mv`，内容零改，5 例照旧）。
+- 变异自查（证断言咬得住，非空跑）：删 `if (yielded) throw e` → 仅半截流例红；`salvage.ts` `stringEnd` 的 `j += 2` → `j += 1` → 仅转义例红；两次均 `git checkout` 复原。
+- vitest 155 passed | 1 skipped（+29），typecheck/eslint/prettier 全绿。
+
+沉淀一条规矩：**叶子或缝入口新增公开 interface，裸缝窗口不得跨过 1 个 slice**（Q6=A 的代价上限，超过就欠债）。
