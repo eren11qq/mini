@@ -100,18 +100,33 @@ const FAINT: Record<EntryKind, boolean> = {
   dim: true,
 };
 
-// ---- C19 tool diff 渲染枝 ----
+// ---- C19/C21 tool details 渲染枝 ----
 // ⎿(U+23BF,码点构造防漂移;WT 若画双宽退 └ 由 W2 眼验裁决)。汇总行 `⎿ +N −M 行` + hunk 行
 // (+ 绿 − 红 ctx dim),非 verbose 正文 8 行封顶同 C11 折叠机关。行不尾带 RESET —— wrapLines
 // 自闭机统一补,宽窗窄窗字节一致。
 const BRANCH = String.fromCodePoint(0x23bf);
 const MINUS = String.fromCodePoint(0x2212);
 const DIFF_BODY_MAX = 8;
+// C21:折叠提示单一出处,diff/out 两枝逐字节同句。
+const foldHint = (hidden: number): string => `${DIM}… +${hidden} 行(Ctrl+O 展开)${RESET}`;
 const rowStyle = (r: DiffRow): string => (r.t === "+" ? GREEN : r.t === "-" ? RED : DIM);
 
-function diffLogical(e: Entry, wrapW: number, verbose: boolean): string[] {
+// C21: out 树 = `⎿ 首行` + 续行全 DIM(两列缩进吃 entryLines 续行前缀机,零新码)。
+function outLogical(text: string, wrapW: number, verbose: boolean): string[] {
+  const lines = text.split("\n");
+  const shown = verbose ? lines : lines.slice(0, DIFF_BODY_MAX);
+  const out = shown
+    .map((l, i) => wrapLines(i === 0 ? `${DIM}${BRANCH}${RESET} ${l}` : `${DIM}${l}`, wrapW))
+    .flat();
+  if (!verbose && lines.length > DIFF_BODY_MAX)
+    out.push(...wrapLines(foldHint(lines.length - DIFF_BODY_MAX), wrapW));
+  return out;
+}
+
+function detailsLogical(e: Entry, wrapW: number, verbose: boolean): string[] {
   const d = e.kind === "tool" ? e.details : undefined;
-  if (!d || d.kind !== "diff") return [];
+  if (!d) return [];
+  if (d.kind === "out") return outLogical(d.text, wrapW, verbose);
   const out = wrapLines(
     `${DIM}${BRANCH}${RESET} ${GREEN}+${d.added}${RESET} ${RED}${MINUS}${d.removed}${RESET} 行`,
     wrapW,
@@ -120,23 +135,21 @@ function diffLogical(e: Entry, wrapW: number, verbose: boolean): string[] {
   for (const r of verbose ? body : body.slice(0, DIFF_BODY_MAX))
     out.push(...wrapLines(`${rowStyle(r)}${r.t}${r.s}`, wrapW));
   if (!verbose && body.length > DIFF_BODY_MAX)
-    out.push(
-      ...wrapLines(`${DIM}… +${body.length - DIFF_BODY_MAX} 行(Ctrl+O 展开)${RESET}`, wrapW),
-    );
+    out.push(...wrapLines(foldHint(body.length - DIFF_BODY_MAX), wrapW));
   return out;
 }
 
 // 一条逻辑条目 → 若干物理行(首行带符号,续行两空格缩进)。
 // C12 顺序契约:分块 → 行内样式 → wrapLines → 前缀。仅 bot 过 markdown(含 live);
 // user/tool/warn/think 保持字面直折 = 旧行为逐字节不变(防注入变脸)。
-// C19:tool 条目带 diff details → 文本行后追加渲染枝(无 details = 零追加,diff=0 锚)。
+// C19/C21:tool 条目带 details(diff/out)→ 文本行后追加渲染枝(无 details = 零追加,diff=0 锚)。
 export function entryLines(e: Entry, w: number, verbose = false): string[] {
   const wrapW = Math.max(4, w - 2);
   const logical =
     e.kind === "bot"
       ? renderMarkdown(e.text, wrapW).flatMap((l) => wrapLines(l, wrapW))
       : undefined;
-  const lines = [...(logical ?? wrapLines(e.text, wrapW)), ...diffLogical(e, wrapW, verbose)];
+  const lines = [...(logical ?? wrapLines(e.text, wrapW)), ...detailsLogical(e, wrapW, verbose)];
   return lines.map((l, i) => {
     const head = i === 0 ? PREFIX[e.kind] : "  ";
     const body = FAINT[e.kind] ? `${DIM}${l}${RESET}` : l;
@@ -361,6 +374,9 @@ export function previewArgs(args: unknown): string {
   return oneLine(JSON.stringify(args ?? ""), 50);
 }
 export function previewResult(result: unknown): string {
-  const r = result as { content?: { text?: string }[] };
-  return oneLine(r?.content?.[0]?.text ?? "", 80);
+  const r = result as { content?: { text?: string }[]; details?: ToolDetails };
+  const text = r?.content?.[0]?.text ?? "";
+  // C21:out 侧信道 → header 取 content 首行(`bash ls → exit code 0 ✓`),不再三行压扁;
+  // diff kind / 无 details = 旧式逐字节不变。
+  return r?.details?.kind === "out" ? oneLine(text.split("\n")[0] ?? "", 80) : oneLine(text, 80);
 }

@@ -94,14 +94,13 @@ export const bashTool: Tool = {
       }
       // AC-T4-4:内联只带保尾截断后的输出(2000 行/50KB,read.ts 同源);exit/path 行在前,永不切。
       const inline = merged.trimEnd() === "" ? "" : tailTruncate(merged.trimEnd().split("\n"));
+      const text = `exit code ${close}\nfull output: ${dumpPath}${inline ? `\n${inline}` : ""}`;
+      // C21(docs/ISSUES.md):out 侧信道 = 模型吃进的同一串逐字(不发明新结构);
+      // timeout/catch fail 分支零 details → 旧 warn 路径逐字节不动。
       return {
-        content: [
-          {
-            type: "text",
-            text: `exit code ${close}\nfull output: ${dumpPath}${inline ? `\n${inline}` : ""}`,
-          },
-        ],
+        content: [{ type: "text", text }],
         isError: false,
+        details: { kind: "out", text },
       };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

@@ -81,6 +81,26 @@ describe("T4 bash:保尾截断", () => {
   });
 });
 
+// C21(docs/ISSUES.md):成功挂 out 侧信道 = 模型吃进的那段原文逐字(不发明新结构);
+// timeout/失败 fail 分支零 details → 旧 warn 路径不动。
+describe("C21 bash out 侧信道", () => {
+  it("AC-C21-1 echo hi 成功 → details.text === content[0].text 逐字,且含 exit code 0 与 full output: 前缀", async () => {
+    const result = await bashTool.run({ command: "echo hi" });
+    expect(result.isError).toBe(false);
+    const text = result.content[0]!.text;
+    // 独立真相:结果体外剥 = 已知-good 两行头(第 1 行 exit,第 2 行落盘路径)+ echo 正文。
+    expect(text.startsWith("exit code 0\nfull output: ")).toBe(true);
+    expect(text.endsWith("\nhi")).toBe(true);
+    expect(result.details).toEqual({ kind: "out", text });
+  });
+
+  it("AC-C21-1b timeout isError:true → details === undefined", async () => {
+    const result = await bashTool.run({ command: "sleep 99103", timeout: 50 });
+    expect(result.isError).toBe(true);
+    expect(result.details).toBeUndefined();
+  });
+});
+
 // AC-T4-5:确认逻辑在 loop(story 24)。真 bashTool 不置 skipConfirm → 必过门;"no" 则命令不执行。
 async function exists(path: string): Promise<boolean> {
   try {

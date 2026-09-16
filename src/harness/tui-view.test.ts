@@ -10,6 +10,7 @@ import {
   fitInput,
   liveEntry,
   LOGO,
+  previewResult,
   renderView,
   selectListLines,
   trunc,
@@ -20,7 +21,7 @@ import {
 } from "./tui-view.ts";
 import type { AgentMessage, AssistantMessage, StopReason } from "../loop/types.ts";
 import type { ContentBlock } from "../blocks.ts";
-import type { DiffDetails, DiffRow } from "../util/diff.ts";
+import type { DiffDetails, DiffRow, ToolDetails } from "../util/diff.ts";
 
 // 汇总行符号走码点构造(同 tui-view 源规约:生僻符号字面量易漂移)。
 const STAR = String.fromCodePoint(0x273b); // ✻
@@ -562,5 +563,57 @@ describe("C19 tool diff 渲染枝", () => {
       expect(ls.length).toBeLessThanOrEqual(20);
       for (const l of ls) expect(vw(l)).toBe(40); // pad 满宽 + wrap 自闭(超长行折,不撑破)
     }
+  });
+});
+
+describe("C21 bash out 树 + header 首行式", () => {
+  const BRANCH = String.fromCodePoint(0x23bf); // ⎿(码点构造,同 C19 规约)
+  const od = (text: string): ToolDetails => ({ kind: "out", text });
+
+  it("字节逐钉:⎿ 首行(枝 DIM 正文自然色),续行 DIM,两列缩进 = entryLines 续行前缀机", () => {
+    const e: Entry = {
+      kind: "tool",
+      text: "bash echo → exit code 0 ✓",
+      details: od("exit code 0\nfull output: /tmp/x.log\nhi"),
+    };
+    expect(entryLines(e, 60)).toEqual([
+      `${DIM}▸${RESET} bash echo → exit code 0 ✓`,
+      `  ${DIM}${BRANCH}${RESET} exit code 0`,
+      `  ${DIM}full output: /tmp/x.log${RESET}`,
+      `  ${DIM}hi${RESET}`,
+    ]);
+  });
+
+  it("折叠算式:30 行 → 8 内容行(L0-L7)+ `… +22 行(Ctrl+O 展开)`;verbose=31 全展;8 行界不折", () => {
+    const mk = (n: number): string => Array.from({ length: n }, (_, i) => `L${i}`).join("\n");
+    const e: Entry = { kind: "tool", text: "bash seq 30 → exit code 0 ✓", details: od(mk(30)) };
+    const folded = entryLines(e, 60); // 1 文本 + 8 正文 + 1 提示 = 10
+    expect(folded).toHaveLength(10);
+    expect(folded[1]).toBe(`  ${DIM}${BRANCH}${RESET} L0`);
+    expect(folded[8]).toBe(`  ${DIM}L7${RESET}`); // 第 8 内容行 = L7(L8 起被折)
+    expect(folded[9]).toBe(`  ${DIM}… +22 行(Ctrl+O 展开)${RESET}`);
+    const full = entryLines(e, 60, true); // 1 + 30 = 31,无提示行
+    expect(full).toHaveLength(31);
+    expect(full[30]).toBe(`  ${DIM}L29${RESET}`);
+    // 恰 8 行界:不折叠
+    expect(entryLines({ kind: "tool", text: "t", details: od(mk(8)) }, 60)).toHaveLength(9);
+  });
+
+  it("header 首行式:out → content 首行;无 details / diff kind 旧 oneLine 逐字节不变(负锚)", () => {
+    const body = "exit code 0\nfull output: /tmp/x.log\nhi";
+    expect(previewResult({ content: [{ type: "text", text: body }], details: od(body) })).toBe(
+      "exit code 0",
+    );
+    // 负锚①:无 details = 三行压扁旧式(oneLine 折叠所有空白)
+    expect(previewResult({ content: [{ type: "text", text: body }] })).toBe(
+      "exit code 0 full output: /tmp/x.log hi",
+    );
+    // 负锚②:diff kind 不吃首行式
+    expect(
+      previewResult({
+        content: [{ type: "text", text: "a\nb" }],
+        details: { kind: "diff", path: "f", added: 0, removed: 0, hunks: [] },
+      }),
+    ).toBe("a b");
   });
 });
