@@ -42,13 +42,13 @@
 
 ## harness 层
 
-| 件                                                | 理由                          | pi 原件                | 何时加回        |
-| ------------------------------------------------- | ----------------------------- | ---------------------- | --------------- |
-| TUI 差分渲染                                      | 独立大工程(pi-tui 整个包)     | packages/tui           | 裸打印能日用后  |
-| print/json/rpc 多模式                             | interactive 一种就够          | modes/index.ts:6-9     | 要接 IDE/脚本时 |
-| extensions/skills/prompt-templates/jiti 热加载    | 报告 §6.9 明确"可选第二期"    | extensions/loader.ts   | v2 主体         |
-| 指数退避多轮重试                                  | 1 次重试已覆盖 relay 抖动主因 | agent-session.ts:2917+ | 频繁 1 次不够时 |
-| --session/--session-id/--no-session/--fork 等旗标 | flags 冻结在 3 个             | cli/args.ts            | 随 fork UI      |
+| 件                                                                                | 理由                                    | pi 原件                | 何时加回        |
+| --------------------------------------------------------------------------------- | --------------------------------------- | ---------------------- | --------------- |
+| TUI 差分渲染                                                                      | 独立大工程(pi-tui 整个包)               | packages/tui           | 裸打印能日用后  |
+| print/json/rpc 多模式                                                             | interactive 一种就够                    | modes/index.ts:6-9     | 要接 IDE/脚本时 |
+| extensions/prompt-templates/jiti 热加载(skills 已升格:C22 三段式 2026-09-16 落地) | 报告 §6.9 明确"可选第二期"(skills 除外) | extensions/loader.ts   | v2 主体         |
+| 指数退避多轮重试                                                                  | 1 次重试已覆盖 relay 抖动主因           | agent-session.ts:2917+ | 频繁 1 次不够时 |
+| --session/--session-id/--no-session/--fork 等旗标                                 | flags 冻结在 3 个                       | cli/args.ts            | 随 fork UI      |
 
 ## markdown v1(C12 砍项,版式人审后续按需回补)
 

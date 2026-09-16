@@ -3,7 +3,7 @@
 本地 tracker。源 = 2026-09-15 设计对话(plan: confirm 系统分层流水线)。
 目标:弹窗从"每次工具调用"降为"仅未预批且非只读的边界动作",同时堵复合命令越权洞。
 分层顺序(所有片共同遵守):工具分级 → 参数解析 → 危险黑名单 → allow 判定(内置只读表 + rules)→ 弹窗兜底。
-合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。C15(/model 自配 key)= PRD 翻案卡,独立于 C10-C14 链,2026-09-15 插队先做。kilocode 对标三卡 C16(弹层特效)→C17(/connect 向导)→C18(/model 收口)按序合,C17 blocked by C16、C18 blocked by C17。展示升级弹头三卡(2026-09-16 立,Claude Code 式工具渲染):C19(edit diff 穿全层)先行,C20(write diff)/C21(bash ⎿ 树)blocked by C19 且互可并行;C19 建议先于 C17 落(tui.ts 邻区防撞)。C22 = skill 三段式(Kilo 同款:扫目录→元数据表进 prompt→工具按需注入)预留号,未建卡。2026-09-16 另起 D 系列(MAF 图案移植批,源 = `docs/PRD-V2.md`,见本文件末尾):编号独立于 C 避并行会话撞号;合并序 D1→D2→D4,D3 刀位独立可穿插,D5 收尾吃全部。
+合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。C15(/model 自配 key)= PRD 翻案卡,独立于 C10-C14 链,2026-09-15 插队先做。kilocode 对标三卡 C16(弹层特效)→C17(/connect 向导)→C18(/model 收口)按序合,C17 blocked by C16、C18 blocked by C17。展示升级弹头三卡(2026-09-16 立,Claude Code 式工具渲染):C19(edit diff 穿全层)先行,C20(write diff)/C21(bash ⎿ 树)blocked by C19 且互可并行;C19 建议先于 C17 落(tui.ts 邻区防撞)。C22 = skill 三段式(Kilo 同款:扫目录→元数据表进 prompt→工具按需注入),2026-09-16 建卡(见 C21 后),吃 DEFERRED skills 预留行。2026-09-16 另起 D 系列(MAF 图案移植批,源 = `docs/PRD-V2.md`,见本文件末尾):编号独立于 C 避并行会话撞号;合并序 D1→D2→D4,D3 刀位独立可穿插,D5 收尾吃全部。
 
 ---
 
@@ -456,6 +456,28 @@ timeout/错误 fail 分支零 details → 旧 warn 路径不动。plain 模式�
 - [ ] bash.test:`echo hi` 成功 → `details.text === content[0].text`;timeout 路径 → undefined
 - [ ] tui-view.test:out 树逐字节(⎿ 首行/续行缩进/30 行 → 8 + `… +22 行` 折叠算式/verbose 全展);header 首行式对 `out` 生效且其余 kind diff=0 负锚
 - [ ] 真机:跑 `seq 30` → 树 8 行折叠,Ctrl+O 全展;文案终判写回
+
+---
+
+## C22 — skill 三段式:扫目录 → 元数据表进 prompt → use_skill 按需加载
+
+**Type**: AFK(真机抽验) · **Blocked by**: 无(D 系列全合,HEAD 起刀;吃 DEFERRED「extensions/skills」预留行)
+
+### What to build
+
+Agent Skills 标准 / Kilo 同款,零新依赖。三段:
+
+1. **扫目录** — 新叶 `src/harness/skills.ts`:`scanSkills({ dirs: string[] }): SkillMeta[]`,`SkillMeta = { name, description, path, body }`(body = 剥 frontmatter 后的正文,扫时一次读入)。约定 = dirs 每个子目录含 `SKILL.md` 即一条 skill;frontmatter(`---` 包 `key: value` 行)只取 `name` + `description`,手写行级解析(不引 YAML 库)。裁决:重名靠前 dir 赢(项目 > 用户,project-context「近者赢」同式);无文件 / frontmatter 坏 / 缺字段 = 静默跳该条不崩;dirs 不存在 = 空表。
+2. **元数据表进 prompt** — `buildSystemPrompt` 加可选参 `skills?: { name; description }[]`:渲染「## 可用技能」清单(`- name: description` + 一句 use_skill 指引)。缺省不传 = 输出逐字节不变(diff-0 锚)。每轮重建(AC-H3-5 现成机关,skill 表热更新免费)。
+3. **工具按需注入** — 新 `src/tools/skill.ts`:`makeSkillTool({ skills })` 工厂(makeTaskTool 同款,表经 deps 注入,run 零扫盘)。`use_skill(name)`:命中 → SKILL.md 正文回喂(剥 frontmatter,元数据已在 prompt 不重吃 token);未知 name → isError 回喂不断环(validate.ts 同式)。`skipConfirm = true`:路径恒来自预扫表,模型只给 name = 与 read 同只读级。cli 组装:dirs = [`<cwd>/.mini/skills`, `~/.mini/skills`(项目优先)],启动扫一次;零 skill → 不注册工具 + prompt 不出表 = 今日行为逐字节不变。
+
+### Acceptance criteria
+
+- [x] skills.test.ts(tmp 真盘,先例 = project-context.test.ts):一个合法 skill 找到且 name/description/path 对 / 两目录重名前 dir 赢、非重叠并存 / 缺 SKILL.md、坏 frontmatter、缺字段 → 跳该条其余照常 / 目录不存在 → `[]`
+- [x] system-prompt.test.ts:skills 表渲染(段名 + 行形状 + 位置 = 工具清单后)/ 不传 = diff-0 锚逐字节
+- [x] skill.test.ts:命中 → 回喂正文(无 frontmatter 残留)isError:false / 未知 name → isError:true 且文本含所请求名
+- [ ] cli.ts 搬运(不写测,AC-H1-3 惯例):真机 = 落一个 `.mini/skills/test-hello/SKILL.md` → prompt 出表 → 模型自发 use_skill → 正文进对话 → 全程零确认弹
+- [x] DEFERRED.md 预留行划掉;全仓 typecheck + vitest 绿(实现落定 2026-09-16:41 files 396|1 全过,新测 12 条 = scanSkills 3 + prompt 2 + use_skill 2,system-prompt 旧 5 条零回归)
 
 ---
 

@@ -18,6 +18,7 @@ import type { ProviderConfig } from "../stream/protocol.ts";
 import { bashTool } from "../tools/bash.ts";
 import { editTool } from "../tools/edit.ts";
 import { readTool } from "../tools/read.ts";
+import { makeSkillTool } from "../tools/skill.ts";
 import { makeTaskTool } from "../tools/task.ts";
 import { writeTool } from "../tools/write.ts";
 import type { Tool } from "../tools/tool.ts";
@@ -25,6 +26,7 @@ import { localDate } from "../util/time.ts";
 import { parseArgs } from "./args.ts";
 import { loadKeys, resolveKey, saveKey } from "./keys.ts";
 import { findProjectContext } from "./project-context.ts";
+import { scanSkills } from "./skills.ts";
 import { PROVIDERS, resolveProvider } from "./providers.ts";
 import { resolveModel } from "./resolve-model.ts";
 import { buildSystemPrompt } from "./system-prompt.ts";
@@ -165,6 +167,10 @@ async function main(): Promise<void> {
   const summarizeFn = makeSummarizeFn((context, signal) => streamFn(context, signal));
 
   const projectContext = findProjectContext({ cwd }); // 启动读一次;缺失 = prompt 该段省略
+  // C22 段1:技能扫描 = 启动一次(项目 > 用户,重名前 dir 赢;缺目录 = 空)。
+  const skills = scanSkills({
+    dirs: [join(cwd, ".mini", "skills"), join(homedir(), ".mini", "skills")],
+  });
 
   // D4(docs/ISSUES.md)task 子代理注册:streamFn 箭头晚绑定(/model 热切自动跟新厂商,
   // 先例 = summarizeFn);child 事件已带 agentId,直挂 trace append(故事 23,同文件)。
@@ -172,6 +178,8 @@ async function main(): Promise<void> {
   let currentTracePath: string | null = null;
   const tools: Tool[] = [
     ...TOOLS,
+    // C22 段3:零 skill = 不注册(prompt 也不出表)→ 无技能目录的今日行为逐字节不变。
+    ...(skills.length > 0 ? [makeSkillTool({ skills })] : []),
     makeTaskTool({
       streamFn: (ctx, sig) => streamFn(ctx, sig),
       onEvent: (ev) => {
@@ -298,6 +306,7 @@ async function main(): Promise<void> {
     // env 每轮现取(日期跨天热更新);仍走 opts,纯函数零状态不破。
     context.systemPrompt = buildSystemPrompt({
       tools,
+      skills, // C22 段2:空数组 = 渲染层自省略(S5 diff-0 锚),无需条件展开
       env: {
         platform: process.platform,
         date: localDate(), // 本地日期:toISOString 是 UTC,东八区晚 8 点后跨天错一天

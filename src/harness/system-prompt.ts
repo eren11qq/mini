@@ -6,6 +6,11 @@ export interface SystemPromptTool {
   name: string;
   description?: string;
 }
+// C22 段2:技能元数据表(全文不进 prompt,由 use_skill 按需加载 —— 三段式省 token 的本意)。
+export interface SystemPromptSkill {
+  name: string;
+  description: string;
+}
 export interface ProjectContext {
   path: string; // 命中文件绝对路径(写进标签属性,模型可引用来源)
   content: string;
@@ -62,6 +67,7 @@ export function buildSystemPrompt(opts: {
   tools: SystemPromptTool[];
   env?: SystemPromptEnv;
   projectContext?: ProjectContext;
+  skills?: SystemPromptSkill[];
 }): string {
   const lines = [HEAD, ""];
   if (opts.env) {
@@ -77,6 +83,12 @@ export function buildSystemPrompt(opts: {
   lines.push(BODY, "", "## 可用工具");
   for (const t of opts.tools) {
     lines.push(t.description ? `- ${t.name}: ${t.description}` : `- ${t.name}`);
+  }
+  // C22 段2:技能表(缺省/空数组 = 整段省略,与 env/projectContext 同「不留空壳」惯例)。
+  if (opts.skills && opts.skills.length > 0) {
+    lines.push("", "## 可用技能");
+    for (const s of opts.skills) lines.push(`- ${s.name}: ${s.description}`);
+    lines.push("需要某技能时用 use_skill 工具加载全文再动手。");
   }
   if (opts.projectContext) {
     lines.push(

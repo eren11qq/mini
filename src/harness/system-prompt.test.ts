@@ -50,6 +50,38 @@ describe("S-a buildSystemPrompt", () => {
     expect(p).not.toContain("- mystery:");
   });
 
+  it("C22-S4 可用技能表 = 工具清单后、项目上下文前,行形状 `- name: description`", () => {
+    const p = buildSystemPrompt({
+      tools: TOOLS,
+      skills: [
+        { name: "pdf", description: "读 PDF" },
+        { name: "tdd", description: "测试先行" },
+      ],
+      projectContext: { path: "/a/AGENTS.md", content: "CTX" },
+    });
+    expect(p).toContain(
+      "## 可用技能\n- pdf: 读 PDF\n- tdd: 测试先行\n需要某技能时用 use_skill 工具加载全文再动手。",
+    );
+    expect(p.indexOf("## 可用技能")).toBeGreaterThan(p.indexOf("## 可用工具"));
+    expect(p.indexOf("## 可用技能")).toBeLessThan(p.indexOf("<project_instructions"));
+  });
+
+  it("C22-S5 diff-0 锚:不传/空数组 skills → 输出与无此参数时逐字节相同", () => {
+    const base = buildSystemPrompt({
+      tools: TOOLS,
+      env: { platform: "linux", date: "2026-09-16", cwd: "/x" },
+      projectContext: { path: "/a/AGENTS.md", content: "CTX" },
+    });
+    expect(buildSystemPrompt({ tools: TOOLS, skills: [] })).not.toContain("## 可用技能");
+    const withRest = buildSystemPrompt({
+      tools: TOOLS,
+      env: { platform: "linux", date: "2026-09-16", cwd: "/x" },
+      projectContext: { path: "/a/AGENTS.md", content: "CTX" },
+      skills: [],
+    });
+    expect(withRest).toBe(base);
+  });
+
   it("env:传入 → <env> 三行落在工具清单前;不传 → 整块省略(不留空壳)", () => {
     const p = buildSystemPrompt({
       tools: TOOLS,
