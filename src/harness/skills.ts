@@ -4,6 +4,7 @@
 // 启动扫一次,运行期编辑磁盘不影响本会话(卡口径;段3 use_skill 纯查此表零 fs)。
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { SlashCommand } from "./commands.ts";
 
 export interface SkillMeta {
   name: string;
@@ -51,4 +52,26 @@ export function scanSkills(opts: { dirs: string[] }): SkillMeta[] {
     }
   }
   return out;
+}
+
+// skill → 斜杠菜单项(用户裁决:装了 skill 后 / 里可见可触发)。纯映射:名字撞 reserved
+// (已注册命令)剔除 —— 命令赢;登记序 = 展示序。run(args) 把「技能名 + 正文 + 用户请求」
+// 交 send(cli 注入 REPL 发送路),与模型侧 use_skill 共源同一份 body。
+export function buildSkillCommands(
+  skills: readonly SkillMeta[],
+  reserved: ReadonlySet<string>,
+  send: (text: string) => void | Promise<void>,
+): SlashCommand[] {
+  return skills
+    .filter((m) => !reserved.has(m.name))
+    .map((m) => ({
+      name: m.name,
+      description: m.description,
+      run: (args: string) =>
+        send(
+          `请使用技能 "${m.name}" 处理本次请求,技能全文如下。\n\n${m.body}\n\n${
+            args ? `用户请求:${args}` : "用户未附额外请求,请按技能直接开始。"
+          }`,
+        ),
+    }));
 }

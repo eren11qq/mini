@@ -14,7 +14,7 @@ import { makeSummarizeFn } from "../memory/compaction.ts";
 import { eventToEntries, turnsSinceLastUser } from "../memory/journal.ts";
 import { SessionManager } from "../memory/session-manager.ts";
 import { createStream } from "../stream/core.ts";
-import type { ProviderConfig } from "../stream/protocol.ts";
+import type { ProviderConfig, StreamFn } from "../stream/protocol.ts";
 import { bashTool } from "../tools/bash.ts";
 import { editTool } from "../tools/edit.ts";
 import { readTool } from "../tools/read.ts";
@@ -24,9 +24,10 @@ import { writeTool } from "../tools/write.ts";
 import type { Tool } from "../tools/tool.ts";
 import { localDate } from "../util/time.ts";
 import { parseArgs } from "./args.ts";
+import { loadConfig, saveModel } from "./config.ts";
 import { loadKeys, resolveKey, saveKey } from "./keys.ts";
 import { findProjectContext } from "./project-context.ts";
-import { scanSkills } from "./skills.ts";
+import { buildSkillCommands, scanSkills } from "./skills.ts";
 import { PROVIDERS, resolveProvider } from "./providers.ts";
 import { resolveModel } from "./resolve-model.ts";
 import { buildSystemPrompt } from "./system-prompt.ts";
@@ -34,9 +35,10 @@ import { matchCommand, splitModelArg, type SlashCommand } from "./commands.ts";
 import { createPlainIO, createTui, type ChatIO } from "./tui.ts";
 import { traceLine } from "./trace.ts";
 
-// 出厂厂商(无 --model、无历史 model_change 时)。--model <alias> 与 model_change payload
-// 存的都是这个表的 key(alias);dialect 由 createStream 内部派发(S3,上层零改动切方言)。
-const DEFAULT_ALIAS = "deepseek";
+// C24:出厂默认厂商已废。--model <alias> 与 model_change payload 存的都是 providers 表的
+// key(alias);上次的选择持久到 ~/.mini/config.json(resolveModel 第三优先级),三源皆无 =
+// 无模型可跑,REPL 照常起、warn 引导 /connect(发送门拦轮,缺 key 同款软路先例 C15)。
+const CONFIG_PATH = join(homedir(), ".mini", "config.json");
 
 // D1 刀3:maxTurns 续计基数。口径 = run-loop.ts `options.maxTurns ?? 50` 的缺省 50 ——
 // loop 零改动(卡片裁决),故两处同值:改 run-loop 缺省必须同步这里。
@@ -73,7 +75,7 @@ async function pickSession(io: ChatIO, baseDir: string, cwd: string): Promise<Se
   io.note("恢复哪个会话?");
   sessions.forEach((s, i) =>
     io.note(
-      `  ${i + 1}) ${new Date(s.mtimeMs).toISOString().slice(0, 19)} · ${s.model ?? DEFAULT_ALIAS} · ${s.sessionId.slice(0, 8)}`,
+      `  ${i + 1}) ${new Date(s.mtimeMs).toISOString().slice(0, 19)} · ${s.model ?? "未配置"} · ${s.sessionId.slice(0, 8)}`,
     ),
   );
   const n = Number((await io.ask("编号: ")).trim());
@@ -130,21 +132,29 @@ async function main(): Promise<void> {
     session = SessionManager.open({ baseDir, cwd }); // 无 sessionId = 最新
   else session = new SessionManager({ baseDir, cwd });
 
-  // ---- 定厂商(AC-H2-2/3):resolveModel 优先级 = --model > 会话末条 model_change > 默认 ----
+  // ---- 定厂商(AC-H2-2/3,C24 改):resolveModel 优先级 = --model > 会话末条 model_change >
+  // 全局 config(~/.mini/config.json)—— 出厂默认已废,三源皆无 = 无模型 ----
   const rebuilt = session.rebuild();
   // D1 刀3:崩溃前那轮已烧的 turn(--continue 接回的历史里末条 user 之后的 assistant 数),
   // 本进程每轮 runLoop 以 50 − 已烧 为预算续计(故事 5;runCompact 的热替换不改此偏移 =
   // 偏移锚在启动 rebuild,压缩只折叠更早窗口)。
   const turnBudget = Math.max(0, MAX_TURNS - turnsSinceLastUser(rebuilt.messages));
-  let alias: string;
-  let provider: ProviderConfig;
+  let alias: string | undefined;
+  let provider: ProviderConfig | null = null;
+  let streamFn: StreamFn | null = null;
   try {
-    alias = resolveModel({
+    const picked = resolveModel({
       cliModel: args.model,
       rebuiltModel: rebuilt.model,
-      defaultAlias: DEFAULT_ALIAS,
-    }); // S-d
-    provider = resolveProvider(alias); // S-a;坏 alias 抛
+      configModel: (await loadConfig(CONFIG_PATH)).model,
+    }); // S-d:C24 起可 undefined(零默认厂商)
+    if (picked === undefined) {
+      io.warn("未配置模型:/connect 配置,或 --model <alias> 启动。");
+    } else {
+      alias = picked;
+      provider = resolveProvider(picked); // S-a;坏 alias 抛
+      streamFn = createStream(provider);
+    }
   } catch (e) {
     io.warn(`${(e as Error).message}`);
     io.stop();
@@ -152,19 +162,25 @@ async function main(): Promise<void> {
     return;
   }
   // C15:启动缺 key 不再 stop+exit(TUI 帧未画即退 = 零反应秒退的根);warn 已入帧可见,REPL 照常,发送门拦轮。
-  await ensureKey(io, alias, provider);
+  if (alias !== undefined && provider !== null) await ensureKey(io, alias, provider);
   // 启动即定厂商:仅当 --model 覆盖了续会话的历史 model 才落 model_change(默认/纯恢复 = 噪音,不写)。
   if (args.model && args.model !== rebuilt.model) {
-    session.append({ type: "model_change", payload: { model: alias } });
+    session.append({ type: "model_change", payload: { model: args.model } });
   }
-  let streamFn = createStream(provider);
+  // C24:显式 --model(过了 resolveProvider 校验,坏值已在上面硬退)= 全局意图,持久。
+  if (args.model) await saveModel(CONFIG_PATH, args.model);
   // TUI 顶栏第二行 = 真模型 id;历史条目 = 所选会话 rebuild(plain 模式两者皆 no-op)。
-  io.setModel(provider.models[0]!.id);
+  io.setModel(provider ? provider.models[0]!.id : "未配置");
   io.loadHistory(rebuilt.messages);
 
+  // 热切转发箭头(C24 起 streamFn 可空 = 未配模型末位防线;REPL 发送门已先拦)。
   // H3 生产 summarizeFn = memory 缝(卡 3 / ADR-004):七段配方拼接、对话正文序列化、流排空、
   // error 上抛全在 memory/compaction.ts。这里只做箭头转发 = /model 热切换掉 streamFn 后自动取最新。
-  const summarizeFn = makeSummarizeFn((context, signal) => streamFn(context, signal));
+  const callStream: StreamFn = (context, signal) => {
+    if (streamFn === null) throw new Error("未配置模型,无法发起请求(/connect)。");
+    return streamFn(context, signal);
+  };
+  const summarizeFn = makeSummarizeFn(callStream);
 
   const projectContext = findProjectContext({ cwd }); // 启动读一次;缺失 = prompt 该段省略
   // C22 段1:技能扫描 = 启动一次(项目 > 用户,重名前 dir 赢;缺目录 = 空)。
@@ -181,7 +197,7 @@ async function main(): Promise<void> {
     // C22 段3:零 skill = 不注册(prompt 也不出表)→ 无技能目录的今日行为逐字节不变。
     ...(skills.length > 0 ? [makeSkillTool({ skills })] : []),
     makeTaskTool({
-      streamFn: (ctx, sig) => streamFn(ctx, sig),
+      streamFn: callStream,
       onEvent: (ev) => {
         if (currentTracePath !== null) {
           appendFileSync(currentTracePath, traceLine(ev, Date.now) + "\n");
@@ -198,6 +214,11 @@ async function main(): Promise<void> {
   // H3:/compact 手动 = force 跳阈值;自动 = 缺省阈值门(compact 内判,不过 → null 零副作用)。
   // 压缩产物经 rebuild 热替换 context.messages(AC-H3-2"后续消息用压缩后 messages")。
   const runCompact = async (manual: boolean): Promise<void> => {
+    if (provider === null) {
+      // C24:无模型 = 无 contextWindow 可算,自动路恒不过(no-model 时发送门已拦轮,进不来这)。
+      if (manual) io.warn("未配置模型(/connect),无可压缩。");
+      return;
+    }
     try {
       const entry = await session.compact({
         contextWindow: provider.models[0]!.contextWindow,
@@ -243,6 +264,7 @@ async function main(): Promise<void> {
     provider = np;
     streamFn = createStream(provider);
     session.append({ type: "model_change", payload: { model: alias } });
+    await saveModel(CONFIG_PATH, name); // C24:切换成功即持久全局 —— 下次启动不再掉回别家
     io.setModel(provider.models[0]!.id); // 顶栏第二行跟着热切走。
     io.note(`已切换 → ${alias} (${provider.models[0]!.id})`);
   };
@@ -273,26 +295,25 @@ async function main(): Promise<void> {
     },
   );
 
-  if (io.mode === "plain") io.note(`mini · ${alias} (${provider.models[0]!.id}) · ${cwd}`);
+  if (io.mode === "plain")
+    io.note(
+      `mini · ${alias ?? "未配置模型(/connect)"} (${provider?.models[0]!.id ?? "-"}) · ${cwd}`,
+    );
   if (projectContext) io.note(`项目上下文:${projectContext.path}`);
   // C7:flag 开启显式来源 —— 直通免弹必须让用户知道为什么没弹。
   if (args.autoAcceptEdits)
     io.note("auto-accept-edits on —— cwd 内 write/edit 直通免弹(bash/黑名单照常弹)");
 
-  for (;;) {
-    const line = (await io.ask()).trim();
-    if (line === "") continue;
-
-    // C9:斜杠分发 = 查注册表(语义见 commands.ts;首 token 命中,余下 trim 作 args)。
-    // 未命中(含一切非 "/" 行)照旧走用户消息回喂流,H3 AC-H3-2 手动压缩即此表的 /compact 行。
-    const hit = matchCommand(COMMANDS, line);
-    if (hit) {
-      await hit.command.run(hit.args);
-      continue;
+  // C24:单轮用户消息处理 = 原 for(;;) 循环体搬入(REPL 与技能注入路共用,调用序 diff-0)。
+  const runTurn = async (line: string): Promise<void> => {
+    // C24 无模型门:三源皆空启动 → warn 拦下(缺 key 同款软路)。
+    if (alias === undefined || provider === null || streamFn === null) {
+      io.warn("未配置模型:/connect 配置,或 --model <alias> 启动。");
+      return;
     }
-
+    const fn = streamFn; // 快照收窄(热切只发生在命令处理里,本轮内稳定)
     // C15 发送门:当前厂商无 key(env+盘全缺)→ warn 拦下,不空 key 打 API。
-    if (!(await ensureKey(io, alias, provider))) continue;
+    if (!(await ensureKey(io, alias, provider))) return;
 
     const user: UserMessage = { role: "user", content: line };
     context.messages.push(user);
@@ -317,7 +338,7 @@ async function main(): Promise<void> {
 
     controller = new AbortController();
     try {
-      for await (const event of runLoop(streamFn, tools, context, {
+      for await (const event of runLoop(fn, tools, context, {
         signal: controller.signal, // SIGINT → loop 停该轮(工具侧 bash 杀进程组)
         maxTurns: turnBudget, // D1:保险丝续计(全新会话 = 50 = 现行缺省,行为零变化)
         rulesPath: join(cwd, "rules.json"), // T2/D4:生产规则落 <cwd>/rules.json
@@ -343,6 +364,30 @@ async function main(): Promise<void> {
     }
     // H3 自动压缩接线(本会话裁决):每轮结束后过阈值门;不过 = null 零副作用,与手动共用 summarizeFn。
     await runCompact(false);
+  };
+
+  // C24(用户裁决:装了 skill 的 / 菜单只有 3 条命令):每个扫到的 skill 追加注册为斜杠
+  // 命令 —— 选中即「正文+参数」经 runTurn 走标准发送路(落会话/trace/渲染全复用)。重名
+  // 裁决 = 已注册命令赢(缝3 纯函数内剔)。晚绑定先例照旧;登记在核心三条之后 = 弹层展示序。
+  // 发送门/落盘/渲染全走标准路;await 到本轮结束才回提示符(分发处 await run 透传)。
+  COMMANDS.push(
+    ...buildSkillCommands(skills, new Set(COMMANDS.map((c) => c.name)), async (t) => {
+      await runTurn(t);
+    }),
+  );
+
+  for (;;) {
+    const line = (await io.ask()).trim();
+    if (line === "") continue;
+
+    // C9:斜杠分发 = 查注册表(语义见 commands.ts;首 token 命中,余下 trim 作 args)。
+    // 未命中(含一切非 "/" 行)照旧走用户消息回喂流,H3 AC-H3-2 手动压缩即此表的 /compact 行。
+    const hit = matchCommand(COMMANDS, line);
+    if (hit) {
+      await hit.command.run(hit.args);
+      continue;
+    }
+    await runTurn(line);
   }
 }
 

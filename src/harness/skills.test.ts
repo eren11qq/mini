@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { scanSkills } from "./skills.ts";
+import { buildSkillCommands, scanSkills, type SkillMeta } from "./skills.ts";
 
 let dir: string;
 beforeAll(async () => {
@@ -57,5 +57,57 @@ describe("C22 scanSkills", () => {
     await mkdir(join(root, "loose-dir"), { recursive: true }); // 无 SKILL.md 的子目录
     expect(scanSkills({ dirs: [root] }).map((s) => s.name)).toEqual(["good"]);
     expect(scanSkills({ dirs: [join(dir, "s3-nonexistent")] })).toEqual([]);
+  });
+});
+
+// C22 追加裁决(用户:装了 skill 但 / 菜单只有 3 条命令):scanSkills 没问题(37 全中),
+// 缺的是「skill → 斜杠菜单项」这一环。本缝 = 纯映射:每项给 name/description,run(args)
+// 把「正文 + 用户请求」交 send 回调(cli 层注入 REPL 发送路)。断言只钉行为要件
+// (名字进表/冲突剔除/载荷含正文与参数),不钉模板措辞 —— 防同义反复测。
+const mkMeta = (name: string, description: string, body: string): SkillMeta => ({
+  name,
+  description,
+  path: `/fake/${name}/SKILL.md`,
+  body,
+});
+
+describe("C22 buildSkillCommands", () => {
+  it("每 skill 一条:名字=菜单项,描述进弹层,登记序保留", () => {
+    const cmds = buildSkillCommands(
+      [mkMeta("tdd", "红绿循环", "B1"), mkMeta("grilling", "拷问模式", "B2")],
+      new Set(),
+      () => {},
+    );
+    expect(cmds.map((c) => [c.name, c.description])).toEqual([
+      ["tdd", "红绿循环"],
+      ["grilling", "拷问模式"],
+    ]);
+  });
+
+  it("与保留命令重名(如 model)→ 该 skill 不注册,其余照常", () => {
+    const cmds = buildSkillCommands(
+      [mkMeta("model", "撞车款", "X"), mkMeta("tdd", "合法款", "Y")],
+      new Set(["compact", "model", "connect"]),
+      () => {},
+    );
+    expect(cmds.map((c) => c.name)).toEqual(["tdd"]);
+  });
+
+  it("run(args) → send 收到含正文+参数+技能名的文本;无参也含正文", () => {
+    const sent: string[] = [];
+    const cmds = buildSkillCommands(
+      [mkMeta("tdd", "d", "RED-GREEN-REFACTOR 正文")],
+      new Set(),
+      (t) => {
+        sent.push(t);
+      },
+    );
+    void cmds[0]!.run("给 config.ts 补测试");
+    void cmds[0]!.run("");
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toContain("RED-GREEN-REFACTOR 正文");
+    expect(sent[0]).toContain("给 config.ts 补测试");
+    expect(sent[0]).toContain("tdd");
+    expect(sent[1]).toContain("RED-GREEN-REFACTOR 正文");
   });
 });
