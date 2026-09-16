@@ -5,9 +5,8 @@
 import type { AgentEvent } from "../loop/types.ts";
 
 export function traceLine(event: AgentEvent, clock: () => number): string {
-  // agentId 提升位 = ts 之后(D2 卡行形状 {ts, agentId?, ...event};现 AgentEvent 无此键,
-  // cast = D4 契约扩的预留缝,届时 types.ts 加 agentId?: string 后可摘)。
-  // 缺省 undefined → JSON.stringify 零键 = 主代理行 diff-0(D4 AC 预钉)。
-  const { agentId, ...rest } = event as AgentEvent & { agentId?: string };
+  // agentId 提升位 = ts 之后(D2 卡行形状 {ts, agentId?, ...event};D4 契约扩已入
+  // types.ts,预留 cast 摘除)。缺省 undefined → JSON.stringify 零键 = 主代理行 diff-0。
+  const { agentId, ...rest } = event;
   return JSON.stringify({ ts: clock(), agentId, ...rest });
 }

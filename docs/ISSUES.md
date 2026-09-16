@@ -551,13 +551,18 @@ runLoop 工具批区改两段:A 段逐 call 串行完成 validate → danger →
 
 ### Acceptance criteria
 
-- [ ] task.test:makeTaskTool 面(schema/description/无 skipConfirm);child 工具集 = 白名单表断(无 task 无 bash 无 write/edit)
-- [ ] confirmDeny 单测:任意 prompt → `{no, "sub-agent headless"}`
-- [ ] S1 双层套娃剧本:父假流吐 task toolCall → child 独立假流(read → 作答)→ 父 messages 配对完整、child 末 text 成 toolResult、child 内 error 假行不断父循环
-- [ ] deny 洞负例:child 工具集经测试注入换假 bash → 零弹窗、父收 `user rejected: bash — sub-agent headless`、循环继续
-- [ ] agentId e2e(隔离 HOME + 假流):trace.jsonl 有 child 行且 agentId 非空;主代理行零该键(diff-0 锚)
-- [ ] abort 透传:父 signal 命中 → child 在飞工具被杀、双层 agent_end reason=aborted、父批补位配对完整
-- [ ] 全仓零回归
+- [x] task.test:makeTaskTool 面(schema/description/无 skipConfirm);child 工具集 = 白名单表断(无 task 无 bash 无 write/edit)
+- [x] confirmDeny 单测:任意 prompt → `{no, "sub-agent headless"}`
+- [x] S1 双层套娃剧本:父假流吐 task toolCall → child 独立假流(read → 作答)→ 父 messages 配对完整、child 末 text 成 toolResult、child 内 error 假行不断父循环
+- [x] deny 洞负例:child 工具集经测试注入换假 bash → 零弹窗、父收 `user rejected: bash — sub-agent headless`、循环继续
+- [x] agentId e2e(隔离 HOME + 假流):trace.jsonl 有 child 行且 agentId 非空;主代理行零该键(diff-0 锚)
+- [x] abort 透传:父 signal 命中 → child 在飞工具被杀、双层 agent_end reason=aborted、父批补位配对完整
+- [x] 全仓零回归(基线卡:f0bc76c = 381 passed | 1 skipped,本卡净 +8 = 389|1,pre-commit 实测为准)
+
+- **契约扩裁决落法**:agentId = `union & { agentId?: string }` 交叉一行(非逐变体 ×10,判别窄化不受影响);agent_end 另加 `usage?: Usage` = child 合计唯一载体(PRD 风险注「trace 必含」坐实,单元 + e2e 双锚 22/7)。D2 预留 cast 已摘(兑现其卡「届时摘」注)。
+- **child 事件管道裁决**:onEvent 回调直挂 cli trace append,**不进父事件流** ⇒ journal/TUI 天然零见 child = 故事 23「不另建会话文件」免费成立(e2e 断 6/11 双证);agentId 取值 = 工厂闭包计数 `task-N`(并行 N task 各拿独立 id,D3 superstep 自动生效)。
+- **红测捞两处测试侧教训**:① child 假工具忘声明 skipConfirm → 确认门先拦 = 测不到在飞段(假工具必须逐字段仿真);② abort 触发点钉在父 tool_execution_start 过早 —— child turn1 流顶格检查即死,「在飞」窗口要等 relay 的 child start 事件。实现侧仅一处真红(aborted 面漏接 → isError false)。
+- **e2e**:`/tmp/d4-e2e.sh`(机关 = d2-fakefetch 原样复用,四段 SSE 队列:父 task → child read → child 终答 → 父终答)。11/11 PASS。
 
 ---
 

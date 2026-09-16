@@ -18,6 +18,7 @@ import type { ProviderConfig } from "../stream/protocol.ts";
 import { bashTool } from "../tools/bash.ts";
 import { editTool } from "../tools/edit.ts";
 import { readTool } from "../tools/read.ts";
+import { makeTaskTool } from "../tools/task.ts";
 import { writeTool } from "../tools/write.ts";
 import type { Tool } from "../tools/tool.ts";
 import { localDate } from "../util/time.ts";
@@ -165,9 +166,25 @@ async function main(): Promise<void> {
 
   const projectContext = findProjectContext({ cwd }); // 启动读一次;缺失 = prompt 该段省略
 
+  // D4(docs/ISSUES.md)task 子代理注册:streamFn 箭头晚绑定(/model 热切自动跟新厂商,
+  // 先例 = summarizeFn);child 事件已带 agentId,直挂 trace append(故事 23,同文件)。
+  // tracePath 每轮在 D2 处更新 —— 闭包读可变引用,零轮次耦合。
+  let currentTracePath: string | null = null;
+  const tools: Tool[] = [
+    ...TOOLS,
+    makeTaskTool({
+      streamFn: (ctx, sig) => streamFn(ctx, sig),
+      onEvent: (ev) => {
+        if (currentTracePath !== null) {
+          appendFileSync(currentTracePath, traceLine(ev, Date.now) + "\n");
+        }
+      },
+    }),
+  ];
+
   const context: LoopContext = {
     messages: rebuilt.messages, // M2 rebuild 缝:接回所选会话历史
-    tools: TOOLS,
+    tools,
   };
 
   // H3:/compact 手动 = force 跳阈值;自动 = 缺省阈值门(compact 内判,不过 → null 零副作用)。
@@ -273,12 +290,14 @@ async function main(): Promise<void> {
     context.messages.push(user);
     session.append({ type: "message", payload: user });
     // D2:会话文件已由上一行 append 首建 → 旁挂路径本轮定死(--no-trace = null,零落盘)。
+    // D4:同值喂 task child 事件旁挂(onEvent 读此可变引用)。
     const tracePath = args.trace ? session.traceFile() : null;
+    currentTracePath = tracePath;
 
     // AC-H3-5:每轮从当前工具集重算 system prompt(纯函数零缓存 = 工具集变即重建)。
     // env 每轮现取(日期跨天热更新);仍走 opts,纯函数零状态不破。
     context.systemPrompt = buildSystemPrompt({
-      tools: TOOLS,
+      tools,
       env: {
         platform: process.platform,
         date: localDate(), // 本地日期:toISOString 是 UTC,东八区晚 8 点后跨天错一天
@@ -289,7 +308,7 @@ async function main(): Promise<void> {
 
     controller = new AbortController();
     try {
-      for await (const event of runLoop(streamFn, TOOLS, context, {
+      for await (const event of runLoop(streamFn, tools, context, {
         signal: controller.signal, // SIGINT → loop 停该轮(工具侧 bash 杀进程组)
         maxTurns: turnBudget, // D1:保险丝续计(全新会话 = 50 = 现行缺省,行为零变化)
         rulesPath: join(cwd, "rules.json"), // T2/D4:生产规则落 <cwd>/rules.json

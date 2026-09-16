@@ -73,9 +73,14 @@ export interface RunLoopOptions {
 }
 
 // ---- AgentEvent 10 类(照抄 pi;agent_end.reason? 为 mini maxTurns 偏离的最小扩)----
-export type AgentEvent =
+// D4(docs/ISSUES.md)契约扩,先例 = 上注「maxTurns 唯一故意偏离」同款记法:
+// 全 10 类可选 agentId? = 子代理归属。缺省 undefined = 主代理(trace 行零此键 = diff-0 锚);
+// 打戳唯一下落 = tools/task.ts 上报处,loop 体零特判(故事 18/23)。
+// agent_end.usage? = D4 child usage 合计一行(PRD 风险注「trace 必含」;主代理同样缺省)。
+// 交叉落法(单点声明,union 判别窄化不受影响)= D2 卡「cast 届时摘」兑现,trace.ts 已摘。
+export type AgentEvent = (
   | { type: "agent_start" }
-  | { type: "agent_end"; messages: AgentMessage[]; reason?: string }
+  | { type: "agent_end"; messages: AgentMessage[]; reason?: string; usage?: Usage }
   | { type: "turn_start" }
   | { type: "turn_end"; message: AssistantMessage; toolResults: ToolResultMessage[] }
   | { type: "message_start"; message: AssistantMessage }
@@ -95,4 +100,5 @@ export type AgentEvent =
       toolName: string;
       result: unknown;
       isError: boolean;
-    };
+    }
+) & { agentId?: string };

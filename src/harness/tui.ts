@@ -359,7 +359,11 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
         case "tool_execution_start":
           entries.push({
             kind: "tool",
-            text: `${ev.toolName} ${previewArgs(ev.args)}`,
+            // D4 故事 22:task 一行进行提示(child 细节全量归属渲染 = DEFERRED 候选)。
+            text:
+              ev.toolName === "task"
+                ? "▸ task 运行中(只读子代理)"
+                : `${ev.toolName} ${previewArgs(ev.args)}`,
             id: ev.toolCallId,
           });
           break;
