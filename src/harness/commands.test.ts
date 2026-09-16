@@ -3,7 +3,7 @@
 // handler 本体是 cli 闭包(组装层),本文件只测查表纯函数;键盘接线 tui.ts 归人工验(W2)。
 import { describe, expect, it } from "vitest";
 
-import { filterCommands, matchCommand, type SlashCommand } from "./commands.ts";
+import { filterCommands, matchCommand, splitModelArg, type SlashCommand } from "./commands.ts";
 
 const noop = (): void => {};
 const CMDS: SlashCommand[] = [
@@ -34,5 +34,25 @@ describe("filterCommands", () => {
     expect(names("/m")).toEqual(["model"]);
     expect(names("/x")).toEqual([]);
     expect(names("hi")).toEqual([]);
+  });
+});
+
+// C18:key 入口唯一 = /connect。/model 只收单 token alias,第二 token 一律判多余
+// (inline-key 旧形态随卡收掉)。返回值只含 alias,绝不回传第二 token = 明文 key 不进任何文案。
+describe("splitModelArg", () => {
+  it("单 token = alias,无多余", () => {
+    expect(splitModelArg("qwen")).toEqual({ alias: "qwen", extra: false });
+  });
+  it("第二 token 出现 = 多余(旧 inline-key 形态拒)", () => {
+    expect(splitModelArg("qwen sk-xxx")).toEqual({ alias: "qwen", extra: true });
+    expect(splitModelArg("qwen sk-xxx y")).toEqual({ alias: "qwen", extra: true });
+  });
+  it("空 / 纯空白 = alias 空串(交回用法行)", () => {
+    expect(splitModelArg("")).toEqual({ alias: "", extra: false });
+    expect(splitModelArg("   ")).toEqual({ alias: "", extra: false });
+  });
+  it("前后与 token 间多余空白不影响判定", () => {
+    expect(splitModelArg("  qwen  ")).toEqual({ alias: "qwen", extra: false });
+    expect(splitModelArg("qwen   sk-xxx")).toEqual({ alias: "qwen", extra: true });
   });
 });

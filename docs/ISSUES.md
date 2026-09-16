@@ -295,7 +295,7 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 - [x] 离线端到端(隔离 HOME,慢喂管道):无 key 启动 warn 可见不退;发消息被发送门拦下;`/model qwen <key>` 落盘切换;无 key 换 `/model glm` 拒绝保原厂商;新进程 `/model qwen` 不带 key 命中 store 兜底
 - [x] PRD 同步:plan.md 第 7 行 + AC-S1-4 改写、DECISIONS S4 打 ★ 修订
 - [ ] 真机(TUI):`mini` 直开 → `/model qwen sk-xxx` 切换成功 → 重启 `/model qwen` 即复用(用户验后勾)
-- 注:C15 的 `/model <alias> <key>` inline 形态将被 C18 收掉,key 入口唯一化 = `/connect`(C16),2026-09-16 用户裁决照 kilocode。
+- 注:C15 的 `/model <alias> <key>` inline 形态已被 C18 收掉(2026-09-16),key 入口唯一化 = `/connect`(C16),2026-09-16 用户裁决照 kilocode。下方「真机」AC 的旧流程随此作废,等价验见 C18 剧本 1/10。
 
 ---
 
@@ -368,9 +368,10 @@ cli 启动 flag。开启后:write/edit 且解析目标在 cwd 内 → 直通免�
 
 ### Acceptance criteria
 
-- [ ] `/model qwen sk-xxx` 不再落盘:报「多余参数」用法行;C15 已存 keys.json 仍可切
-- [ ] C15 离线剧本重跑(键入口换 `/connect` 后)全绿;switchModel 单入口零分叉
-- [ ] 文档三处同步:ISSUES C15 注、plan.md AC-S1-4、DECISIONS S4(入口名改 `/connect`)
+- [x] `/model qwen sk-xxx` 不再落盘:报「多余参数」用法行;C15 已存 keys.json 仍可切(剧本 1/2/10 + `splitModelArg` 表测 4 例;被拒 key 零落盘 = 剧本 6,明文不回显 = 剧本 7)
+- [x] C15 离线剧本重跑(键入口换 `/connect` 后)全绿;switchModel 单入口零分叉(剧本 10/10;saveKey 调用点实测仅剩 cli.ts:236 /connect 一处)
+- [x] 文档三处同步:ISSUES C15 注、plan.md AC-S1-4、DECISIONS S4(入口名改 `/connect`)
+- 实现注(2026-09-16 TDD):参数判定抽 `commands.ts` 纯缝 `splitModelArg`(alias 单 token,第二 token = 多余,不回传 key 本体);cli 接线删 inline 分支,ensureKey warn 与注册表 usage 同步改口,providers.ts 头注释随修。剧本坑记:plain REPL 下 `rl "close"→process.exit` + 启动期 ensureKey 的 await 让 burst 行无人认领即丢 —— 喂 stdin 必须逐行前置 sleep(`/tmp/c18-e2e.sh` 留档)。
 
 ---
 

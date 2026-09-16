@@ -27,3 +27,17 @@ export function matchCommand(commands: SlashCommand[], line: string): CommandHit
   if (!command) return null;
   return { command, args: sp < 0 ? "" : line.slice(sp + 1).trim() };
 }
+
+// C18:key 入口唯一 = /connect。/model 参数形态钉死为单 token alias,第二 token = 多余
+// (旧 inline-key 落盘通道收掉)。只报判定不回传第二 token = 明文 key 无路径进任何文案。
+export interface ModelArgs {
+  alias: string;
+  extra: boolean;
+}
+
+export function splitModelArg(rest: string): ModelArgs {
+  const t = rest.trim();
+  const sp = t.search(/\s/);
+  if (sp < 0) return { alias: t, extra: false };
+  return { alias: t.slice(0, sp), extra: true };
+}

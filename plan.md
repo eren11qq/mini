@@ -190,7 +190,7 @@
 
 - Scenario:config.key_env="DEEPSEEK_API_KEY"
 - Action:stream
-- Expected:第一源 process.env;缺 → `~/.mini/keys.json`(alias→key,0600,`/model <alias> <key>` 写)兜底;cli 合流后回填 env(`??=` 只补缺),适配器仍逐请求读 key_env,下游零改动;不在 config/仓库文件留密钥值
+- Expected:第一源 process.env;缺 → `~/.mini/keys.json`(alias→key,0600,写盘入口唯一 = `/connect`,C18 修订 2026-09-16,原 `/model <alias> <key>` 内联形态收)兜底;cli 合流后回填 env(`??=` 只补缺),适配器仍逐请求读 key_env,下游零改动;不在 config/仓库文件留密钥值
 - Must not:任何源文件或 fixture 含真实密钥(grep `sk-`/`DEEPSEEK_API_KEY=` 赋值零命中);keys.json 住 HOME 不进仓库;警告/提示不回显 key 本体
 - Verification:vitest(keys.ts resolveKey/loadKeys/saveKey 含 mode 0600 断言)+`npm run format:check`+grep;fixture 用合成 key 占位
 - Priority:Required

@@ -25,7 +25,7 @@ import { findProjectContext } from "./project-context.ts";
 import { PROVIDERS, resolveProvider } from "./providers.ts";
 import { resolveModel } from "./resolve-model.ts";
 import { buildSystemPrompt } from "./system-prompt.ts";
-import { matchCommand, type SlashCommand } from "./commands.ts";
+import { matchCommand, splitModelArg, type SlashCommand } from "./commands.ts";
 import { createPlainIO, createTui, type ChatIO } from "./tui.ts";
 
 // 出厂厂商(无 --model、无历史 model_change 时)。--model <alias> 与 model_change payload
@@ -34,7 +34,7 @@ const DEFAULT_ALIAS = "deepseek";
 
 const TOOLS: Tool[] = [readTool, writeTool, editTool, bashTool];
 
-// C15 密钥来源 = env > 0600 落盘 store(~/.mini/keys.json,`/model <alias> <key>` 写盘)。
+// C15 密钥来源 = env > 0600 落盘 store(~/.mini/keys.json;C18 后写盘入口唯一 = `/connect`)。
 // 合流后回填 process.env[key_env](只补缺不覆盖 env 原值)= stream 适配器逐请求读 env,下游零改动。
 // 缺不再硬退:返回 false + warn 进帧。启动缺 = REPL 照常(发送门拦轮),热切缺 = 不切。
 const KEYS_PATH = join(homedir(), ".mini", "keys.json");
@@ -49,9 +49,7 @@ async function ensureKey(io: ChatIO, alias: string, provider: ProviderConfig): P
     process.env[provider.key_env] ??= k;
     return true;
   }
-  io.warn(
-    `未配置 ${alias} 的 API key:/model ${alias} <api-key> 落盘,或 export ${provider.key_env}。`,
-  );
+  io.warn(`未配置 ${alias} 的 API key:/connect 配置,或 export ${provider.key_env}。`);
   return false;
 }
 
@@ -185,14 +183,16 @@ async function main(): Promise<void> {
 
   // 会话内热切(AC-H2-3):/model <alias> → 校验+换 provider+落 model_change entry。
   // 只换下一条消息起生效;坏 alias / 缺密钥 → 保持原厂商、不污染 jsonl。
-  // C15:/model <alias> [api-key] —— 带 key = 校验 alias 后 saveKey 落盘(0600),再走同一条校验切换路;
-  // 不带 = 只查 env/已存盘。key 参数全程不回显(警告/提示只出现 alias)。
+  // C18:key 入口唯一 = /connect。inline-key 旧形态(C15)收掉 —— 第二 token 一律判多余,
+  // 不落盘不回显;切换只走 env/已存 key 的既有校验路。
   const switchModel = async (rest: string): Promise<void> => {
-    const sp = rest.indexOf(" ");
-    const name = sp < 0 ? rest : rest.slice(0, sp);
-    const key = sp < 0 ? "" : rest.slice(sp + 1).trim();
+    const { alias: name, extra } = splitModelArg(rest);
     if (name === "") {
-      io.note("用法:/model <alias> [api-key]");
+      io.note("用法:/model <alias>");
+      return;
+    }
+    if (extra) {
+      io.warn("多余参数:/model 只收 <alias>,key 配置请用 /connect");
       return;
     }
     let np: ProviderConfig;
@@ -202,7 +202,6 @@ async function main(): Promise<void> {
       io.warn(`${(e as Error).message}`);
       return;
     }
-    if (key !== "") await saveKey(KEYS_PATH, name, key);
     if (!(await ensureKey(io, name, np))) return; // 缺密钥不切,保留原厂商
     alias = name;
     provider = np;
@@ -215,7 +214,7 @@ async function main(): Promise<void> {
   // C9 登记(晚绑定补齐):分发段只查表,不认具体命令。
   COMMANDS.push(
     { name: "compact", description: "手动压缩上下文", run: () => runCompact(true) },
-    { name: "model", description: "切换厂商模型", usage: "<alias> [api-key]", run: switchModel },
+    { name: "model", description: "切换厂商模型", usage: "<alias>", run: switchModel },
     // C17 /connect:向导数据在此组装(表驱动,渲染层零业务),effect 消费 = saveKey → switchModel
     // 同款校验 + 热切(resolveKey 现读盘 = 落盘即生效,单进程无 kilo 的 dispose/bootstrap)。
     {
