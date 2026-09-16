@@ -2,7 +2,7 @@
 
 - 来源:2026-09-16 调研对话([microsoft/agent-framework](https://github.com/microsoft/agent-framework) v1.0 GA 对照,结论 = 无 TS SDK,只移植图案不引代码;对照表见会话档)
 - 基线:v1(`docs/PRD.md`)⓪–④ 层全绿,C1–C21 已合/在途;本批新卡走 **D 系列**,落 `docs/ISSUES.md`
-- 缝裁决(用户确认 2026-09-16):复用 S1(`runLoop`)+ S3(`SessionManager`)+ harness 组装点;新纯叶 = journal.ts / trace.ts / task.ts;契约扩仅 `AgentEvent.agentId?` 一处
+- 缝裁决(用户确认 2026-09-16;D5 收口 2026-09-16):复用 S1(`runLoop`)+ S3(`SessionManager`)+ harness 组装点;新纯叶 = journal.ts / trace.ts / task.ts;契约扩 = 两个可选字段一处交叉(`AgentEvent` 全 10 类 `agentId?` + `agent_end.usage?` = child usage 合计唯一载体,原句"仅一处"被 D4 实际落法修订)
 - **先行 bug(D1 的靶心)**:toolResult 从未落盘 —— cli.ts 只订阅 `message_end` 落盘,而 runLoop 对 toolResult 不发 message_* 事件(只随 `turn_end` 携带)。带工具的会话 `--continue` = 末条 assistant 悬空 toolCall、配对 toolResult 全缺 → 两方言序列化后 provider 必 400。故事 26 字面成立、语义已破
 
 ## Problem Statement
@@ -13,7 +13,7 @@
 
 把 MAF 的生产运行图案逐个手术移植成 TS 零依赖形态,四片竖切:
 
-1. **D1 journal + 配对修复**(≈ MAF checkpoint/superstep):工具结果按 `tool_execution_end` 即时落盘;rebuild 后对悬空 toolCall 注入"结果未知"合成 toolResult;maxTurns 跨 resume 从消息重建续计
+1. **D1 journal + 配对修复**(≈ MAF checkpoint/superstep):工具结果按 `tool_execution_end` 落盘(D3 后粒度 = 批级,allSettled 批齐按调用序发,D5 收口见故事 1);rebuild 后对悬空 toolCall 注入"结果未知"合成 toolResult;maxTurns 跨 resume 从消息重建续计
 2. **D2 trace 导出**(≈ MAF OpenTelemetry):AgentEvent → JSONL 全事件落盘,按会话同目录
 3. **D3 同批并行**(≈ superstep fan-out/fan-in):确认仍逐弹(对人),run 并发,回填按调用序
 4. **D4 task 子代理**(≈ workflow-as-agent):runLoop 递归包成普通 Tool,首版只读工具白名单 + headless 拒答 confirm + 深度 1
@@ -24,7 +24,7 @@
 
 ### D1 —— 工具日志落盘 + resume 配对修复
 
-1. 作为使用者,我想工具一执行完结果就落盘,以便进程崩了也不丢已发生的工具事实
+1. 作为使用者,我想每批工具跑完后结果按调用序落盘,以便进程崩了不丢已完成批次的事实;在飞批被杀 = 该批缺位统一由 repairDangling 补"结果未知"(D5 裁决 2026-09-16:D3 合并后即时性 = 批级,call 级即时落盘入 DEFERRED 候选)
 2. 作为使用者,我想 `--continue`/`--resume` 一个用过工具的会话不再收到 provider 400,以便断点续聊真正成立(修现行 bug)
 3. 作为使用者,我想崩溃时机批里悬空的 toolCall 被自动补 `{isError}`"中断,结果未知 —— 副作用可能已发生,先核实再重试"的 toolResult,以便模型不盲目重跑 `bash rm/git commit` 这类有副作用的命令
 4. 作为开发者,我要求 事件→entry 映射(journal)与悬空修复(repair)都是纯函数,以便零网络零 fs 钉死单测
@@ -67,13 +67,13 @@
 
 - **范围**:D1→D4 按序(D3 独立;D4 的 trace 归属吃 D2、并发 N 个 task 吃 D3,故排最后);P5/P6/P7 不立项
 - **journal.ts**(memory 家,纯):`eventToEntries(event): entry[]` —— `message_end`(assistant)照旧一条;新增 `tool_execution_end` → `{type:"message", payload: ToolResultMessage}`;cli 订阅环从硬编码 if 改查 journal 分发表,落盘动作与顺序不变(append = 事件到达序,assistant 的 message_end 天然先于同批 toolResults)
-- **repairDangling**(journal.ts 同文件,纯):`repairDangling(messages): {messages, injected}` —— 只对**末条** assistant(`stopReason==="tool_use"`)的 toolCall id 集 − 其后已存在 toolResult 的 toolCallId 集;合成 `{isError:true, text:"interrupted before result was persisted — 副作用可能已发生,先核实(bash 重跑前查盘)再重试"}`;接入点 = `SessionManager.rebuild()` 出口(memory 侧),loop/cli 零感知;配对回退判据有先例 = compaction 刀口(session-manager.ts)
+- **repairDangling**(journal.ts 同文件,纯):`repairDangling(messages): {messages, injected}` —— 只对**末条** assistant(`stopReason==="tool_use"`)的 toolCall id 集 − 其后已存在 toolResult 的 toolCallId 集;合成 `{isError:true, text:"interrupted before result was persisted — 副作用可能已发生,先核实(bash 重跑前查盘)再重试"}`;接入点 = `SessionManager.rebuild()` 出口(memory 侧),loop/cli 零感知;配对回退判据有先例 = compaction 刀口(session-manager.ts);补位插入位置 = 该批末条已有结果之后而非数组尾(D1 红测捞出:尾插在续聊落盘后 rebuild 会把 tool 行吊在新 user 行之后,openai 方言必 400 —— wire 硬要求 tool 紧跟带 tool_calls 的 assistant,D5 收口)
 - **maxTurns 续计**:cli 组装 options 前从 `context.messages` 派生"末条 user 之后的 assistant 数"作偏移 → loop 零改动(接口已有 `maxTurns`,偏移在 harness 算,裁决仍是纯函数级)
-- **trace.ts**(harness 家,纯 reducer + 落盘分离):`traceLine(event, clock): string`;cli 订阅环 appendFile;行 = `{ts, agentId?, ...event}`;`--no-trace` = parseArgs 新 flag(纯缝先例 args.ts)
-- **AgentEvent 契约扩**:全 10 类可选 `agentId?: string`,缺省 = 主代理;先例注记照 types.ts 头("照抄 pi + maxTurns 偏离")追加一行
-- **并行两段式**(run-loop.ts 工具批区):A 段 = 逐 call 串行完成 validate/danger/rules/confirm(收集 `writable`、落盘规则),B 段 = `Promise.allSettled` 并发已过门 runs,`tool_execution_start` 于 B 段按调用序先全发,results 按调用序回填;A→B 之间查 signal(既有 aborted 缝保留);allSettled 后仍有缺位(abort 杀死)→ 合成 `{isError:true,"aborted"}` 补位,不破配对
-- **task.ts**(tools 家):`makeTaskTool({streamFn, maxTurns=20}) → Tool`;args schema = `{prompt: string}`;child context = 新 messages + 精简 systemPrompt(任务说明 + read 工具清单);child tools = `[read]`(skipConfirm 已有);child options = `{confirm: headless-deny, maxTurns: 20, signal: 父signal透传}`(不传 rulesPath/sessionRules = 无 always 落盘面);结果 = child 末条 assistant text 进 `content`;child usage 合计进 trace 一条 `agent_end` 行;TUI 首版仅"▸ task 运行中"一行(经 tool_execution_start 派生,agentId 渲染细化 = DEFERRED 候选)
-- **headless-deny**:纯叶 `confirmDeny(prompt) → {kind:"no", reason:"sub-agent headless"}`(住 task.ts 或 loop 侧,卡内定)
+- **trace.ts**(harness 家,纯 reducer + 落盘分离):`traceLine(event, clock): string`;cli 订阅环 appendFile;行 = `{ts, agentId?, ...event}`(agentId 提升为 ts 后首键,D2 卡裁;缺省零键 = 主代理行 diff-0);`--no-trace` = parseArgs 新 flag(纯缝先例 args.ts);旁挂共存两修(D2 红测捞出,D5 收口):`open()`/`list()` 扫描排除 `.trace.jsonl` 后缀(mtime 最新恒被吞 / --resume 选择器出假会话)+ 新增 `SessionManager.traceFile(): string | null` getter(会话名含 uuidv7 且延迟首建,类外不可知;纯路径推衍零碰盘,"落盘动作住 cli"不破)
+- **AgentEvent 契约扩**:全 10 类可选 `agentId?: string`,缺省 = 主代理;落法 = `union & { agentId?: string }` 交叉一行非逐变体 ×10,判别窄化不受影响(D4 裁);取值 = `task-N`(N = task.ts 工厂闭包计数,并行 N child 各拿独立 id,D3 superstep 自动生效);另加 `agent_end.usage?: Usage`(见缝裁决行);先例注记照 types.ts 头("照抄 pi + maxTurns 偏离")追加一行
+- **并行两段式**(run-loop.ts 工具批区):A 段 = 逐 call 串行完成 validate/danger/rules/confirm(收集 `writable`、落盘规则),B 段 = `Promise.allSettled` 并发已过门 runs,`tool_execution_start` 于 B 段按调用序先全发,results 与 `tool_execution_end` 均按调用序回填/发出(allSettled 批齐后 = 落盘粒度批级,D1 卡预留退路,D5 收口进故事 1,call 级即时 = DEFERRED 候选);A→B 之间查 signal(既有 aborted 缝保留);allSettled 后仍有缺位(abort 杀死)→ 合成 `{isError:true,"aborted"}` 补位,不破配对
+- **task.ts**(tools 家):`makeTaskTool({streamFn, maxTurns=20}) → Tool`;args schema = `{prompt: string}`;child context = 新 messages + 精简 systemPrompt(任务说明 + read 工具清单);child tools = `[read]`(skipConfirm 已有);child options = `{confirm: headless-deny, maxTurns: 20, signal: 父signal透传}`(不传 rulesPath/sessionRules = 无 always 落盘面);结果 = child 末条 assistant text 进 `content`;child usage 合计进 trace 一条 `agent_end` 行(载 `usage`);child 事件管道 = `onEvent` 直连 cli trace append、**不进父事件流** ⇒ journal/TUI 天然零见 child = 故事 23「不另建会话文件」免费成立(D4 裁,D5 收口);TUI 首版仅"▸ task 运行中(只读子代理)"一行(tui.ts 经 tool_execution_start 派生,agentId 全量归属渲染 = DEFERRED 候选)
+- **headless-deny**:纯叶 `confirmDeny(prompt) → {kind:"no", reason:"sub-agent headless"}`(住家 = `tools/task.ts`,D4 卡内定,D5 收口)
 - **接线纪律**:三处接线(journal 分发 / trace append / task 注册)全在 cli.ts 订阅区,裁决零渗 harness;"确认逻辑在 loop 不在工具"(故事 24)不变
 - **rules.json 语义**:child 不读不写(白名单只 read 本不弹;deny 叶是未来扩 child 工具集时的地基);父 rules 仍是唯一审批面
 

@@ -576,6 +576,28 @@ DEFERRED.md 划账:「并行 tool 执行」(D3)与「sub-agent」半行(D4;plan 
 
 ### Acceptance criteria
 
-- [ ] 四文档互检无矛盾(PRD-V2 / ISSUES / DECISIONS / DEFERRED;对照 = 翻案两行、★两行、D 卡 AC 注记映射表)
-- [ ] 修订行文案人审签号(HITL)
-- [ ] 本卡零生产码改动,全仓绿
+- [x] 四文档互检无矛盾(PRD-V2 / ISSUES / DECISIONS / DEFERRED;对照 = 翻案两行、★两行、D 卡 AC 注记映射表)—— 映射表见下方实现注记
+- [x] 修订行文案人审签号(HITL)—— 方向两裁(story 1 照实批级 / 候选全入 5 行)+ 终稿三处措辞(故事 1 新句 / DECISIONS 两行 / DEFERRED 触发条件)2026-09-16 用户签「可以了」
+- [x] 本卡零生产码改动,全仓绿 —— 判卷 2026-09-16:typecheck ✓ / eslint 0 error(101 warnings = 既有基线)/ prettier ✓ / vitest **389 passed | 1 skipped** = D4 卡锚 389|1 净 +0(零测试面批次,改动仅 docs 四件)
+
+### 实现注记(2026-09-16,D5 收尾)
+
+- **用户裁决两则(2026-09-16)**:① story 1 照实收口为**批级**(D1 卡预留退路兑现:merged D3 的 `tool_execution_end` 在 `Promise.allSettled` 后按调用序统一发 = run-loop.ts B 段实证,非 settle 即发);② DEFERRED「D 系列候选」表 = 卡面 3 行 + D1 判据面 1 行 + call 级落盘残余 1 行,共 **5 行全入**。
+- **映射表(D1–D4 实现注记冲突点 → spec 终落点)**:
+
+  | #   | 冲突/收口点                                      | 实际落地                                                                              | 终落点                                                            |
+  | --- | ------------------------------------------------ | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+  | 1   | 落盘粒度(D1 ⚠ 跨卡发现)                          | end 批齐后按调用序发 = 批级                                                           | PRD-V2 故事 1 + Solution① + 「并行两段式」行;DEFERRED 候选第 5 行 |
+  | 2   | repairDangling 补位位置(D1 裁决修正)             | 该批末条已有结果之后,非数组尾(wire 硬要求)                                            | PRD-V2 repairDangling 行                                          |
+  | 3   | trace 行键序 / 主代理缺省                        | agentId 提升 ts 后首键;缺省零键 diff-0                                                | PRD-V2 trace.ts 行                                                |
+  | 4   | 旁挂共存两修(D2 红测)                            | `open()`/`list()` 排除 `.trace.jsonl` + `SessionManager.traceFile()` getter           | PRD-V2 trace.ts 行                                                |
+  | 5   | 契约扩实为两处                                   | `agentId?` 全 10 类 + `agent_end.usage?`,union 交叉一行                               | PRD-V2 缝裁决行 + AgentEvent 行                                   |
+  | 6   | agentId 取值                                     | `task-N` = task.ts 工厂闭包计数(并行 N child 独立 id)                                 | PRD-V2 AgentEvent 行                                              |
+  | 7   | confirmDeny 住家                                 | `tools/task.ts`(卡「或 loop 侧」→ D4 定此)                                            | PRD-V2 headless-deny 行                                           |
+  | 8   | child 事件管道                                   | `onEvent` 直连 cli trace append,不进父事件流 ⇒ 故事 23 免费成立                       | PRD-V2 task.ts 段                                                 |
+  | 9   | TUI 文案字面                                     | 「▸ task 运行中(只读子代理)」(tui.ts 实证,故事 22 意图达成)                           | PRD-V2 task.ts 段                                                 |
+  | 10  | AC-L2-3 串行钉翻案(D3 卡「DECISIONS 记账归 D5」) | 两段式断言已落 run-loop.test                                                          | DECISIONS L4 行改现语义 + ② 修订记录 L4 行                        |
+  | 11  | 故事 24 两行翻案                                 | DEFERRED「并行 tool 执行」行 ★注 + 「永远不做」sub-agent 半行改写(plan-mode 半行不动) | DEFERRED 两处 + DECISIONS ② 修订记录补 2 行                       |
+
+- **行号锚保护(DEFERRED.md:66,故事 24 引用)**:原 66 行改写后仍单行 = 行号不漂,C8 教训沿用;新候选表落该节之后(行号 >66)。
+- **卡外未动**:D3「对人弹窗仍一次一个」与实现一致零收口;plan.md 不在四文档互检面,H 系列零碰;PRD.md 零字不动(卡面裁定)。

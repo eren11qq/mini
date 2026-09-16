@@ -4,12 +4,12 @@
 
 ## loop 层
 
-| 件                                         | 理由                            | pi 原件                                                       | 何时加回                    |
-| ------------------------------------------ | ------------------------------- | ------------------------------------------------------------- | --------------------------- |
-| steering 队列(流式中插话)                  | readline 与 LLM 流并发,复杂度×2 | agent-loop.ts:194-209 + PendingMessageQueue(agent.ts:125-159) | v1 跑顺、想"边跑边改方向"时 |
-| followUp 队列(停后排队续跑)                | 同上                            | agent-loop.ts:261-265                                         | 与 steering 一起            |
-| 并行 tool 执行                             | 串行已够,并行引入竞态           | agent-loop.ts:416-424(executionMode)                          | 一批多 read 变常见后        |
-| shouldStopAfterTurn / prepareNextTurn 钩子 | v1 无扩展系统                   | types.ts:223 / agent-loop.ts:176-190                          | 做 extensions 时            |
+| 件                                         | 理由                                                                                                                                                     | pi 原件                                                       | 何时加回                    |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------- |
+| steering 队列(流式中插话)                  | readline 与 LLM 流并发,复杂度×2                                                                                                                          | agent-loop.ts:194-209 + PendingMessageQueue(agent.ts:125-159) | v1 跑顺、想"边跑边改方向"时 |
+| followUp 队列(停后排队续跑)                | 同上                                                                                                                                                     | agent-loop.ts:261-265                                         | 与 steering 一起            |
+| ~~并行 tool 执行~~ ★翻案(D3,2026-09-16)    | 已加回 = 两段式并行(A 弹检串行 / B 并发 / 调用序回填),记账见 DECISIONS「② 修订记录」L4 行 + PRD-V2 故事 11–16;残余「call 级即时落盘」入下方 D 系列候选表 | agent-loop.ts:416-424(executionMode)                          | 已加回(D3)                  |
+| shouldStopAfterTurn / prepareNextTurn 钩子 | v1 无扩展系统                                                                                                                                            | types.ts:223 / agent-loop.ts:176-190                          | 做 extensions 时            |
 
 ## tools 层
 
@@ -63,8 +63,18 @@
 ## 永远不做(pi 的取舍,mini 继承,见报告 §6 末段)
 
 - 逐工具之外的全局功能开关式安全(项目信任已有,不再加层)
-- sub-agent / plan-mode 内建 —— pi 下放给扩展,mini v1 直接不做
+- plan-mode 内建 —— pi 下放给扩展,mini v1 不做(原行「sub-agent /」半行 ★翻案 D4 = 只读深度 1 task 子代理,记账见 DECISIONS「② 修订记录」+ PRD-V2 故事 17–24;本节标题与其余两条不变)
 - 向量检索式跨会话记忆 —— pi 本身就没有(报告 §5.4),别被"memory"一词骗去做 embedding
+
+## D 系列候选(MAF 移植批遗留,D5 落账 2026-09-16)
+
+| 件                                                   | 理由 / 现状                                                                                                                                            | 现落点(加回时动这里)                                | 何时加回                                                       |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------- | -------------------------------------------------------------- |
+| **child 写权限 + HITL 异步审批上抛(P5)**             | task 首版只读白名单 [read] = 刻意钱包保险(PRD-V2 风险注);child 扩权限若需写或远程审批,confirm 缝要先改 pause/resume 形                                 | `tools/task.ts` 白名单 + `run-loop.ts` confirm 形态 | PRD-V2 Out of Scope P5 触发:child 拿写权限或远程审批需求真出现 |
+| **agentId 全量归属渲染**                             | child 事件只进 trace 不进父事件流,D4 首版 TUI 仅"▸ task 运行中(只读子代理)"一行;并行 N task 时屏幕分不清谁在干                                         | `harness/tui.ts` / `tui-view.ts` 订阅与渲染区       | 多代理并行日用、真需看屏调试时                                 |
+| **loop 缺 confirm 改默认拒**                         | run-loop「不传 confirm = 放行」历史洞(pi 兼容);D4 用 confirmDeny 从 child 侧堵死,默认面未动(改 = 全局收紧,既有 AC-L2 弹窗剧本需全复验)                 | `run-loop.ts` 确认门默认分支                        | 出现"不传 confirm"的真实调用面,或下张扩权限卡碰确认门时顺带    |
+| **aborted/error 批带残 toolCall 悬空不在 repair 面** | repairDangling 只盯末条 assistant `stopReason==="tool_use"`;aborted/error 批次的悬空同 400 风险面,但无在飞副作用、场景边缘(D1 卡判据面注记入册)        | `memory/journal.ts` repairDangling                  | 真出现 aborted/error 面 resume 400 一次                        |
+| **call 级即时落盘(D3 批级残余)**                     | 落盘在 allSettled 批齐后按调用序:B 段中途 kill = 已完成未轮到 call 的结果同批丢,repairDangling 一律补"结果未知"(story 1 收口为批级,D5 裁决 2026-09-16) | `run-loop.ts` B 段(settle 即发 end + 回填重排)      | 真撞到"长批 + 中途杀"受害一次                                  |
 
 ## 品味 backlog(Q1 压下的,等 v1 1:1 复刻完成才有资格谈)
 
