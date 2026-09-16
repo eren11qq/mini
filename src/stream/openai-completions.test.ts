@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { createStream } from "./core.ts";
 import { TransportError } from "./transport.ts";
+import { repairDangling } from "../memory/journal.ts";
+import type { AgentMessage } from "../loop/types.ts";
 import type { ProviderConfig, ProviderEvent, Transport } from "./protocol.ts";
 
 // AC-S1-2:协议映射
@@ -430,5 +432,48 @@ describe("AC-S1-7 定稿截断整批拒执", () => {
     expect(err).toBeDefined();
     expect(events.at(-1)?.type).toBe("error");
     expect(events.some((e) => e.type === "done")).toBe(false);
+  });
+});
+
+// ================= D1(docs/ISSUES.md):rebuild 出口产物 → wire 配对锚 =================
+// 悬空修复(journal.repairDangling,rebuild 出口已接)过的 messages 喂方言:请求体里
+// assistant.tool_calls 每个 id 必紧跟 role:"tool" 对应行 —— provider 400 的正身防回归。
+
+describe("D1 toWire — repairDangling 后零悬空(openai 方言)", () => {
+  it("崩溃批 [user, assistant(c1,c2), tool(c1)] 修复后 → body roles [user,assistant,tool,tool],c2 = 「结果未知」补位", async () => {
+    const raw: AgentMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "c1", name: "bash", arguments: { command: "echo hi" } },
+          { type: "toolCall", id: "c2", name: "bash", arguments: { command: "sleep 30" } },
+        ],
+        stopReason: "tool_use",
+      },
+      {
+        role: "toolResult",
+        toolCallId: "c1",
+        toolName: "bash",
+        content: [{ type: "text", text: "hi" }],
+        isError: false,
+      },
+    ];
+    const { messages } = repairDangling(raw);
+    let captured: RequestInit | null = null;
+    const transport: Transport = async function* (_url, init) {
+      captured = init;
+      yield `data: [DONE]`;
+    };
+    const streamFn = createStream(deepseekConfig, { transport });
+    for await (const _ of streamFn({ messages })) void _;
+
+    const body = JSON.parse(captured!.body as string) as {
+      messages: { role: string; tool_call_id?: string; content?: string }[];
+    };
+    expect(body.messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "tool"]);
+    const tools = body.messages.filter((m) => m.role === "tool");
+    expect(tools.map((m) => m.tool_call_id)).toEqual(["c1", "c2"]);
+    expect(tools[1]!.content).toContain("interrupted before result was persisted");
   });
 });

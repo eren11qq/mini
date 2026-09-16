@@ -10,6 +10,7 @@ import { runLoop } from "../loop/run-loop.ts";
 import type { Rule } from "../loop/rules.ts";
 import type { LoopContext, UserMessage } from "../loop/types.ts";
 import { makeSummarizeFn } from "../memory/compaction.ts";
+import { eventToEntries, turnsSinceLastUser } from "../memory/journal.ts";
 import { SessionManager } from "../memory/session-manager.ts";
 import { createStream } from "../stream/core.ts";
 import type { ProviderConfig } from "../stream/protocol.ts";
@@ -31,6 +32,10 @@ import { createPlainIO, createTui, type ChatIO } from "./tui.ts";
 // 出厂厂商(无 --model、无历史 model_change 时)。--model <alias> 与 model_change payload
 // 存的都是这个表的 key(alias);dialect 由 createStream 内部派发(S3,上层零改动切方言)。
 const DEFAULT_ALIAS = "deepseek";
+
+// D1 刀3:maxTurns 续计基数。口径 = run-loop.ts `options.maxTurns ?? 50` 的缺省 50 ——
+// loop 零改动(卡片裁决),故两处同值:改 run-loop 缺省必须同步这里。
+const MAX_TURNS = 50;
 
 const TOOLS: Tool[] = [readTool, writeTool, editTool, bashTool];
 
@@ -122,6 +127,10 @@ async function main(): Promise<void> {
 
   // ---- 定厂商(AC-H2-2/3):resolveModel 优先级 = --model > 会话末条 model_change > 默认 ----
   const rebuilt = session.rebuild();
+  // D1 刀3:崩溃前那轮已烧的 turn(--continue 接回的历史里末条 user 之后的 assistant 数),
+  // 本进程每轮 runLoop 以 50 − 已烧 为预算续计(故事 5;runCompact 的热替换不改此偏移 =
+  // 偏移锚在启动 rebuild,压缩只折叠更早窗口)。
+  const turnBudget = Math.max(0, MAX_TURNS - turnsSinceLastUser(rebuilt.messages));
   let alias: string;
   let provider: ProviderConfig;
   try {
@@ -278,14 +287,18 @@ async function main(): Promise<void> {
     try {
       for await (const event of runLoop(streamFn, TOOLS, context, {
         signal: controller.signal, // SIGINT → loop 停该轮(工具侧 bash 杀进程组)
+        maxTurns: turnBudget, // D1:保险丝续计(全新会话 = 50 = 现行缺省,行为零变化)
         rulesPath: join(cwd, "rules.json"), // T2/D4:生产规则落 <cwd>/rules.json
         confirm: (prompt) => io.confirm(prompt), // 四档答案映射在 tui.ts(mapConfirm)
         autoAcceptEdits: args.autoAcceptEdits, // C7:cli flag → loop 直通判据(默认 false = 零变化)
         sessionRules, // C6:答 2 = 规则进此数组(内存,本 run 免弹,不落盘)
       })) {
         io.render(event);
-        if (event.type === "message_end") {
-          session.append({ type: "message", payload: event.message }); // M1 即时落盘
+        // D1:查 journal 分发表落盘(从前此处硬编码只认 message_end → toolResult 从不进
+        // JSONL,--continue 悬空 toolCall 必 400)。append = 事件到达序,assistant 的
+        // message_end 天然先于同批 tool_results,顺序语义与 M1 即时落盘一致。
+        for (const entry of eventToEntries(event)) {
+          session.append(entry);
         }
       }
     } finally {

@@ -3,6 +3,7 @@ import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "./session-manager.ts";
+import { repairDangling } from "./journal.ts";
 import { SUMMARY_SECTIONS, buildSummarizePrompt } from "./summarize-prompt.ts";
 import { runLoop } from "../loop/run-loop.ts";
 import type {
@@ -655,5 +656,78 @@ describe("H3 compact:force 手动路径", () => {
       payload: { summary: "手动纪要", firstKeptEntryId: keptId },
     });
     expect(sm.rebuild().messages).toEqual([user("手动纪要"), asst("a1")]);
+  });
+});
+
+// ================= D1: rebuild 出口悬空修复(崩溃批次 toolCall 无结果 → 合成补位行)=================
+// 现行 bug:toolResult 从不落盘(cli 旧订阅环硬编码),带工具的会话 --continue = 末条 assistant
+// 悬空 toolCall → provider 400。落盘面(D1 刀1)由 journal.test + e2e 剧本钉;此处钉修复面:
+// rebuild 出口零感知接 repairDangling,修复是投影不落盘。
+
+const d1Call: AssistantMessage = {
+  role: "assistant",
+  content: [
+    { type: "toolCall", id: "c1", name: "bash", arguments: { command: "echo hi" } },
+    { type: "toolCall", id: "c2", name: "bash", arguments: { command: "sleep 30" } },
+  ],
+  stopReason: "tool_use",
+};
+const d1Tr1 = {
+  role: "toolResult" as const,
+  toolCallId: "c1",
+  toolName: "bash",
+  content: [{ type: "text" as const, text: "hi" }],
+  isError: false,
+};
+
+describe("D1 rebuild:出口悬空修复", () => {
+  it("S3 append 全剧本 → 新 open().rebuild() → 零悬空;补位 = 合成 isError 行插该批结果后;盘纹丝不动", async () => {
+    const cwd = join(dir, "d1fix");
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    sm.append({ type: "message", payload: user("先打 hi 再睡") });
+    sm.append({ type: "message", payload: d1Call });
+    sm.append({ type: "message", payload: d1Tr1 }); // kill -9 落在 c2 在飞:批只落了首条结果
+    const file = await soleSessionFile("d1fix");
+    const before = (await readFile(file, "utf8")).trimEnd().split("\n");
+
+    const { messages } = SessionManager.open({ baseDir: dir, cwd }).rebuild();
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "toolResult"]);
+    expect(messages[3]).toEqual({
+      role: "toolResult",
+      toolCallId: "c2",
+      toolName: "bash",
+      content: [
+        {
+          type: "text",
+          text: "interrupted before result was persisted — 副作用可能已发生,先核实(bash 重跑前查盘)再重试",
+        },
+      ],
+      isError: true,
+    });
+    expect(repairDangling(messages).injected).toEqual([]); // 出口自证:再修 = diff-0
+    expect((await readFile(file, "utf8")).trimEnd().split("\n")).toEqual(before); // 投影不落盘
+  });
+
+  it("修复后续聊落了盘 → 再 rebuild 补位仍插该批结果后、不塌尾(配对手征逐轮成立)", async () => {
+    const cwd = join(dir, "d1cont");
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    sm.append({ type: "message", payload: user("go") });
+    sm.append({ type: "message", payload: d1Call });
+    sm.append({ type: "message", payload: d1Tr1 });
+
+    const sm2 = SessionManager.open({ baseDir: dir, cwd }); // --continue 接回
+    sm2.rebuild(); // 投影消费一次(不写盘)
+    sm2.append({ type: "message", payload: user("续聊") }); // resume 后新 user 落盘
+
+    const { messages } = SessionManager.open({ baseDir: dir, cwd }).rebuild();
+    expect(messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "toolResult", // 补位在「续聊」之前
+      "user",
+    ]);
+    expect((messages[3] as { toolCallId: string }).toolCallId).toBe("c2");
+    expect(messages[4]).toEqual(user("续聊"));
   });
 });

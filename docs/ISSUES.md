@@ -479,12 +479,21 @@ Bug:cli 落盘只订阅 `message_end`,而 runLoop 对 toolResult 不发 message_
 
 ### Acceptance criteria
 
-- [ ] journal.test:`tool_execution_end` → 恰一条 message entry(payload role=toolResult 字段完整);message_end 输出与现行逐字节同;其余事件种 → 零条
-- [ ] repairDangling 表测:无悬空 = diff-0 / 两缺其一 = 只补一条 / 末条非 tool_use = 不动 / 多 toolCall 全缺 = 按调用序全补
-- [ ] S3 临时目录:append 全剧本 → 新 `open().rebuild()` → messages 零悬空;两方言 toWire 各一例锚:请求体零悬空 tool_use / tool_use 与 tool_result 一一配对(S2 离线 fixture 先例)
-- [ ] maxTurns 偏移纯函数测(假 messages 表驱动:0 turn / 中途 user 重置 / 末条 user 未回)
-- [ ] e2e 剧本(plain 慢喂,逐行 sleep 防 EOF = C18 教训):kill -9 于 bash 执行中 → `--continue` 发消息 → 断请求体含「结果未知」补位行;脚本留档并把结论写回本卡
-- [ ] 全仓零回归 + typecheck/eslint/prettier 干净
+- [x] journal.test:`tool_execution_end` → 恰一条 message entry(payload role=toolResult 字段完整);message_end 输出与现行逐字节同;其余事件种 → 零条
+- [x] repairDangling 表测:无悬空 = diff-0 / 两缺其一 = 只补一条 / 末条非 tool_use = 不动 / 多 toolCall 全缺 = 按调用序全补
+- [x] S3 临时目录:append 全剧本 → 新 `open().rebuild()` → messages 零悬空;两方言 toWire 各一例锚:请求体零悬空 tool_use / tool_use 与 tool_result 一一配对(S2 离线 fixture 先例)
+- [x] maxTurns 偏移纯函数测(假 messages 表驱动:0 turn / 中途 user 重置 / 末条 user 未回)
+- [x] e2e 剧本(plain 慢喂,逐行 sleep 防 EOF = C18 教训):kill -9 于 bash 执行中 → `--continue` 发消息 → 断请求体含「结果未知」补位行;脚本留档并把结论写回本卡
+- [x] 全仓零回归 + typecheck/eslint/prettier 干净
+
+### 实现注记(2026-09-16,TDD 红→绿全程)
+
+- **规模**:journal.test 23 例(分发表全 10 事件种 + repairDangling 边界含位置 6 例 + turnsSinceLastUser 3 例)/ session-manager.test D1 组 2 例(S3 临时目录全剧本 + 修复后续聊不塌尾)/ 两方言 toWire 锚各 1 例。判卷基线 = 主树 HEAD 7b2287a;全仓 362 passed | 1 skipped(含并行 D3 WIP 增量),typecheck/eslint(0 error)/prettier 净。
+- **裁决修正(卡片措辞 → 实现,补 2 红测钉死)**:repairDangling 补位 = 插在「该批末条已有结果之后」而非数组尾 —— resume 后用户续聊落了盘再 rebuild 时,尾插会让 tool 行吊在新 user 行之后,openai 方言必 400;wire 硬要求 = tool 紧跟带 tool_calls 的 assistant。
+- **e2e**:脚本 `/tmp/d1-e2e.sh` + 机关 `/tmp/d1-fakefetch.mjs`(`node --import` 进程内 patch 全局 fetch = 假流回放 + 请求体落盘,用户裁决 2026-09-16;零网络零改 src)+ 断言器 `/tmp/d1-logcheck.mjs`。**判卷树 = `git worktree /tmp/d1-base` detached@7b2287a + D1 工件**(主树混着未合的 D3 WIP,不作判据,见下条)。7/7 PASS:echo 结果先落盘(刀 1 本体)/ sleep 在飞被杀 c2 悬空在盘 / 修复行不落盘(投影幂等)/ resume 请求体 roles=[system,user,assistant,tool,tool,user] 配对完整、c2 含「结果未知」逐字。
+- **⚠ 跨卡发现(给 D3)**:主树 D3 WIP 把 `tool_execution_end` 全憋到 `Promise.allSettled` 批齐后才发 → 故事 1「工具一执行完结果就落盘」退化为批级落盘:长兄弟 call 在飞时 kill = 已完成 call 的结果又丢了(e2e 断言 #2 在 WIP 树上红 = 实证)。D3 合入前应改「每个 run settle 即发 end 事件,allSettled 只管按调用序回填 messages/toolResults」;不改则故事 1 措辞收口归 D5。
+- **判据面注记(按卡字面,不改)**:只盯末条 assistant 且 `stopReason==="tool_use"`;aborted/error 批次带残 toolCall 块的悬空不在修复面(同样 400 风险面,但无在飞副作用,场景边缘),DEFERRED 候选顺手记一笔。
+- **maxTurns 续计**:cli `turnBudget = max(0, 50 − turnsSinceLastUser(启动 rebuild messages))` 传既有 options;50 与 run-loop 缺省两处同值(loop 零改动裁决),已双向注释。全新会话 offset = 0 = 现行行为逐字节不变。
 
 ---
 

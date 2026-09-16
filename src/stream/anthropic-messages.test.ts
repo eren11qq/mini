@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createStream } from "./core.ts";
+import { repairDangling } from "../memory/journal.ts";
+import type { AgentMessage } from "../loop/types.ts";
 import type { ProviderConfig, ProviderEvent, Transport } from "./protocol.ts";
 
 // AC-S3-2: thinking_delta 映射
@@ -261,5 +263,54 @@ describe("AC-S3-4 加厂商只配置行(anthropic 方言)", () => {
     }
     expect(captured!.url).toBe("https://glm.example/api/messages");
     expect(JSON.parse(captured!.body).model).toBe("glm-4");
+  });
+});
+
+// ================= D1(docs/ISSUES.md):rebuild 出口产物 → wire 配对锚(anthropic 方言)=================
+// tool_use ↔ tool_result 一一配对 + 补位 is_error:true;连续 toolResult 并入同一 user 消息
+// (toAnthropicMessages 交替规则)→ 修复行必须落进同一条 user,不另起孤立消息。
+
+describe("D1 toWire — repairDangling 后零悬空(anthropic 方言)", () => {
+  it("崩溃批 [user, assistant(c1,c2), tool_result(c1)] 修复后 → tool_use c1/c2 在同批 user.tool_result 全配对", async () => {
+    const raw: AgentMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "c1", name: "bash", arguments: { command: "echo hi" } },
+          { type: "toolCall", id: "c2", name: "bash", arguments: { command: "sleep 30" } },
+        ],
+        stopReason: "tool_use",
+      },
+      {
+        role: "toolResult",
+        toolCallId: "c1",
+        toolName: "bash",
+        content: [{ type: "text", text: "hi" }],
+        isError: false,
+      },
+    ];
+    const { messages } = repairDangling(raw);
+    let captured: RequestInit | null = null;
+    const transport: Transport = async function* (_url, init) {
+      captured = init;
+      yield `data: {"type":"message_stop"}`;
+    };
+    const streamFn = createStream(anthropicCfg, { transport });
+    for await (const _ of streamFn({ messages })) void _;
+
+    const body = JSON.parse(captured!.body as string) as {
+      messages: { role: string; content: Record<string, unknown>[] }[];
+    };
+    expect(body.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    const useIds = body.messages[1]!.content.map((b) => [b.type, b.id]);
+    expect(useIds).toEqual([
+      ["tool_use", "c1"],
+      ["tool_use", "c2"],
+    ]);
+    const results = body.messages[2]!.content;
+    expect(results.map((b) => b.tool_use_id)).toEqual(["c1", "c2"]);
+    expect(results[1]!.is_error).toBe(true);
+    expect(String(results[1]!.content)).toContain("interrupted before result was persisted");
   });
 });

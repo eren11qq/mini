@@ -16,6 +16,7 @@ import {
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { AgentMessage } from "../loop/types.ts";
+import { repairDangling } from "./journal.ts";
 import { filenameStamp } from "../util/time.ts";
 
 export interface SessionHeader {
@@ -212,7 +213,9 @@ export class SessionManager {
         srcIds.splice(0, keptFrom, null);
       }
     }
-    return { messages, model };
+    // D1:出口悬空修复(journal.repairDangling,投影不写盘)。崩溃批次的 toolCall 补合成
+    // isError 行 → 两方言 toWire 配对完整,--continue 不再必 400。loop/cli 零感知。
+    return { messages: repairDangling(messages).messages, model };
   }
 
   // 磁盘 → 全 entry map → 从 leafId(缺省 = 末行)沿 parentId 回溯到根,正序返回(rebuild/compact 共用)。
