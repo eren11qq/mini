@@ -3,7 +3,13 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { runLoop } from "../loop/run-loop.ts";
-import type { AgentEvent, ConfirmAnswer, LoopContext, ToolResultMessage } from "../loop/types.ts";
+import type {
+  AgentEvent,
+  AssistantMessage,
+  ConfirmAnswer,
+  LoopContext,
+  ToolResultMessage,
+} from "../loop/types.ts";
 import type { ProviderEvent, StreamFn } from "../stream/protocol.ts";
 import type { Rule } from "../loop/rules.ts";
 import { readTool } from "./read.ts";
@@ -1014,5 +1020,206 @@ describe("C6 AC-4:复合命令逐段建议", () => {
     ]);
     expect(printedRules(s.prompts[0] ?? "")).toEqual(disk.map((r) => `${r.tool}  ${r.prefix}`));
     expect(s.prompts[0]).toContain("将落盘 2 条规则");
+  });
+});
+
+// D3(docs/ISSUES.md)同批两段式:A 段弹检串行(弹窗仍一次一个)、B 段并发执行、
+// 回填按调用序。假流一圈吐两个独立 call,run 闭包在时间线上记录起止窗。
+describe("D3 同批两段式", () => {
+  // 同名两单靠 args.tag 区分;5ms 计时器 = 注册序(A 先注册先收尾)→ 时间线确定。
+  function taggedSlowRead(tl: string[]): Tool {
+    return {
+      name: "read",
+      schema: {
+        type: "object",
+        properties: { tag: { type: "string" } },
+        required: ["tag"],
+        additionalProperties: false,
+      },
+      async run(a) {
+        const tag = String((a as { tag: string }).tag);
+        tl.push(`start:${tag}`);
+        await new Promise((r) => setTimeout(r, 5));
+        tl.push(`end:${tag}`);
+        return { content: [{ type: "text", text: tag }], isError: false };
+      },
+    };
+  }
+  function twoCallStream(name: string): StreamFn {
+    let turn = 0;
+    return () => {
+      if (++turn === 1) {
+        return (async function* () {
+          yield { type: "start" };
+          yield { type: "toolcall_delta", id: "c1", name, arguments: { tag: "A" } };
+          yield { type: "toolcall_delta", id: "c2", name, arguments: { tag: "B" } };
+          yield { type: "done", stopReason: "tool_use" };
+        })();
+      }
+      return (async function* () {
+        yield { type: "start" };
+        yield { type: "text_delta", delta: "done" };
+        yield { type: "done", stopReason: "stop" };
+      })();
+    };
+  }
+
+  it("AC-1 两独立 read call → run 窗重叠(第二 start 早于第一 end),回填序 = 调用序", async () => {
+    const tl: string[] = [];
+    const context: LoopContext = { messages: [{ role: "user", content: "two reads" }] };
+    const events = await collect(runLoop(twoCallStream("read"), [taggedSlowRead(tl)], context, {}));
+
+    expect(tl).toEqual(["start:A", "start:B", "end:A", "end:B"]);
+
+    const idxOf = (type: string, id: string) =>
+      events.findIndex((e) => e.type === type && (e as { toolCallId: string }).toolCallId === id);
+    // start 在 B 段前按调用序统一发,end 按调用序回填
+    expect(idxOf("tool_execution_start", "c1")).toBeLessThan(idxOf("tool_execution_start", "c2"));
+    expect(idxOf("tool_execution_start", "c2")).toBeLessThan(idxOf("tool_execution_end", "c1"));
+    expect(idxOf("tool_execution_end", "c1")).toBeLessThan(idxOf("tool_execution_end", "c2"));
+
+    const ids = context.messages
+      .filter((m): m is ToolResultMessage => m.role === "toolResult")
+      .map((m) => m.toolCallId);
+    expect(ids).toEqual(["c1", "c2"]);
+  });
+
+  it("AC-2 两未预批 call → confirm 恰 2 且串行(弹全部先于任何 run),双 yes 后两 run 并发", async () => {
+    const tl: string[] = [];
+    const prompts: string[] = [];
+    const confirm = (p: string): ConfirmAnswer => {
+      prompts.push(p);
+      tl.push(`confirm:${prompts.length}`);
+      return { kind: "yes" };
+    };
+    const doit: Tool = {
+      name: "doit",
+      schema: {
+        type: "object",
+        properties: { tag: { type: "string" } },
+        required: ["tag"],
+        additionalProperties: false,
+      },
+      async run(a) {
+        const tag = String((a as { tag: string }).tag);
+        tl.push(`start:${tag}`);
+        await new Promise((r) => setTimeout(r, 5));
+        tl.push(`end:${tag}`);
+        return { content: [{ type: "text", text: tag }], isError: false };
+      },
+    };
+
+    const context: LoopContext = { messages: [{ role: "user", content: "go" }] };
+    await collect(runLoop(twoCallStream("doit"), [doit], context, { confirm }));
+
+    expect(prompts).toHaveLength(2);
+    // A 段弹窗逐次串行,run 全在弹完之后 = start×2 夹在 confirm×2 与 end×2 之间(并发)
+    expect(tl).toEqual(["confirm:1", "confirm:2", "start:A", "start:B", "end:A", "end:B"]);
+  });
+
+  it("AC-3a A→B 之间命中 abort → B 不启动、零 tool 事件,整批走既有 aborted 路径", async () => {
+    let runN = 0;
+    const t: Tool = {
+      name: "doit",
+      async run() {
+        runN += 1;
+        return { content: [{ type: "text", text: "x" }], isError: false };
+      },
+    };
+    const controller = new AbortController();
+    const prompts: string[] = [];
+    const confirm = (p: string): ConfirmAnswer => {
+      prompts.push(p);
+      if (prompts.length === 2) controller.abort(); // 最后一次 A 段弹答完 = 落在 A→B 缝
+      return { kind: "yes" };
+    };
+
+    const context: LoopContext = { messages: [{ role: "user", content: "go" }] };
+    const events = await collect(
+      runLoop(twoCallStream("doit"), [t], context, { confirm, signal: controller.signal }),
+    );
+
+    expect(prompts).toHaveLength(2); // A 段两弹均已答(abort 正发生在其间隙后)
+    expect(runN).toBe(0); // B 段未启动
+    expect(
+      events.filter((e) => e.type === "tool_execution_start" || e.type === "tool_execution_end"),
+    ).toHaveLength(0);
+    const tes = events.filter((e) => e.type === "turn_end");
+    expect(tes).toHaveLength(1);
+    expect(tes[0]?.type === "turn_end" && tes[0].toolResults).toEqual([]);
+    expect(context.messages.filter((m) => m.role === "toolResult")).toHaveLength(0);
+    const last = events[events.length - 1]!;
+    expect(last.type === "agent_end" && last.reason).toBe("aborted");
+  });
+
+  it("AC-3b B 中途 abort 杀 run → 缺位全补 isError,配对完整(toWire 可过)", async () => {
+    const controller = new AbortController();
+    // 观测 signal 即死的假工具(真 bash 的 Story 16 机制面):reject = 全批 Promise 中的缺位。
+    const diesOnAbort: Tool = {
+      name: "doit",
+      async run(_a, signal) {
+        await new Promise<never>((_res, rej) => {
+          if (signal?.aborted) return rej(new Error("aborted"));
+          signal?.addEventListener("abort", () => rej(new Error("aborted")));
+        });
+        throw new Error("unreachable");
+      },
+    };
+
+    const context: LoopContext = { messages: [{ role: "user", content: "go" }] };
+    const events: AgentEvent[] = [];
+    let starts = 0;
+    // 手工驱动:第 2 个 tool_execution_start(= B 段已开跑)后 abort。
+    for await (const ev of runLoop(twoCallStream("doit"), [diesOnAbort], context, {
+      signal: controller.signal,
+    })) {
+      events.push(ev);
+      if (ev.type === "tool_execution_start" && ++starts === 2) controller.abort();
+    }
+
+    const ends = events.filter((e) => e.type === "tool_execution_end");
+    expect(ends.map((e) => (e.type === "tool_execution_end" ? e.toolCallId : null))).toEqual([
+      "c1",
+      "c2",
+    ]);
+    expect(ends.every((e) => e.type === "tool_execution_end" && e.isError)).toBe(true);
+    const msgs = context.messages.filter((m): m is ToolResultMessage => m.role === "toolResult");
+    expect(
+      msgs.map((m) => [m.toolCallId, m.isError, m.content.map((b) => b.text).join("")]),
+    ).toEqual([
+      ["c1", true, "aborted"],
+      ["c2", true, "aborted"],
+    ]);
+    // 两个 toolCall 全有配对行(悬空 = 400 靶心,D1 前提不破)
+    const asst = context.messages[1] as AssistantMessage;
+    expect(asst.content.filter((b) => b.type === "toolCall")).toHaveLength(2);
+  });
+
+  it("AC-5 并发批含 terminate=true → 全批完成后停,无第二 turn(AC-L3-5 复验)", async () => {
+    const tl: string[] = [];
+    const t: Tool = {
+      name: "doit",
+      async run(a) {
+        const tag = String((a as { tag: string }).tag);
+        tl.push(`start:${tag}`);
+        await new Promise((r) => setTimeout(r, tag === "A" ? 9 : 1)); // B 先完 = 完成序 ≠ 调用序
+        tl.push(`end:${tag}`);
+        return {
+          content: [{ type: "text", text: tag }],
+          isError: false,
+          ...(tag === "A" ? { terminate: true } : {}),
+        };
+      },
+    };
+
+    const context: LoopContext = { messages: [{ role: "user", content: "go" }] };
+    const events = await collect(runLoop(twoCallStream("doit"), [t], context, {}));
+
+    expect(tl).toEqual(["start:A", "start:B", "end:B", "end:A"]); // 并发生效
+    const ends = events.filter((e) => e.type === "tool_execution_end");
+    expect(ends).toHaveLength(2); // 后完的 terminate 不截走先完的 B 回填
+    expect(events.filter((e) => e.type === "turn_start")).toHaveLength(1);
+    const last = events[events.length - 1]!;
+    expect(last.type === "agent_end" && last.reason).toBe("terminate");
   });
 });

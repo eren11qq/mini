@@ -524,12 +524,12 @@ runLoop 工具批区改两段:A 段逐 call 串行完成 validate → danger →
 
 ### Acceptance criteria
 
-- [ ] registry.test D3 组:假流两独立 read call → 假工具闭包记录 start 窗口重叠(第二个 start 早于第一个 end),回填序 = 调用序
-- [ ] 两未预批 call:confirm 恰 2 次且串行(第 2 次弹时第 1 次已答完),双 yes → 两 run 并发执行
-- [ ] abort A 后 B 前命中 → B 不启动,整批走既有 aborted 路径(AC-L3-4 剧本逐字节同);B 中途 abort → 缺位全补 isError,配对完整(两方言 toWire 可过)
-- [ ] 单 call 批 = 现行行为逐字节(dif-0 负锚:既有工具批剧本全绿零改)
-- [ ] anyTerminate 批仍全批完成后停(AC-L3-5 复验)
-- [ ] 全仓零回归(基线 = 合卡前 HEAD 全绿数写回本卡)
+- [x] registry.test D3 组:假流两独立 read call → 假工具闭包记录 start 窗口重叠(第二个 start 早于第一个 end),回填序 = 调用序
+- [x] 两未预批 call:confirm 恰 2 次且串行(第 2 次弹时第 1 次已答完),双 yes → 两 run 并发执行
+- [x] abort A 后 B 前命中 → B 不启动,整批走既有 aborted 路径(AC-L3-4 剧本逐字节同);B 中途 abort → 缺位全补 isError,配对完整(两方言 toWire 可过)
+- [x] 单 call 批 = 现行行为逐字节(dif-0 负锚:既有工具批剧本全绿零改)
+- [x] anyTerminate 批仍全批完成后停(AC-L3-5 复验)
+- [x] 全仓零回归(基线 = 合卡前 HEAD 全绿数写回本卡)——基线卡:7b2287a = 330 passed | 1 skipped(其 detached worktree 实测),D1 = 3fe6277(本卡净 +5 锚;合卡数= 其 HEAD 全绿 +5,以 commit 钩子实测为准)。翻案注:AC-L2-3 原「同批串行」钉就地改写为两段式断言(run-loop.test),DECISIONS 记账归 D5。
 
 ---
 

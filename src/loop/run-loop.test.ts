@@ -178,10 +178,9 @@ describe("AC-L2-2 单次 toolCall 两圈停", () => {
   });
 });
 
-// AC-L2-3: 同批多 toolCall 串行
-// Scenario:假 streamFn 一圈吐两个 toolCall(A,B);两假工具各自记录执行时间戳
-// Expected:A 的 tool_execution_end 早于 B 的 tool_execution_start;无交错
-// Must not:A、B 并发(时间戳重叠)
+// AC-L2-3 → D3(docs/ISSUES.md)翻案:原钉「同批串行、Must not:并发」,被 DECISIONS 修订
+// (superstep 两段并行,PRD-V2)推翻。本块改钉两段式样式:A 段门零事件、start 在 B 段前
+// 按调用序统一发、run 窗口重叠、end 与回填按调用序(与完成序无关)。
 function makeRecordingTool(
   name: string,
   clock: () => number,
@@ -203,8 +202,8 @@ function makeRecordingTool(
   return tool;
 }
 
-describe("AC-L2-3 同批多 toolCall 串行", () => {
-  it("A.end 早于 B.start,时间戳不重叠", async () => {
+describe("AC-L2-3 → D3 同批两段式(翻案原串行钉)", () => {
+  it("start 按调用序统一发、run 窗口重叠、end 与回填按调用序", async () => {
     let t = 0;
     const clock = () => ++t;
     const toolA = makeRecordingTool("toolA", clock);
@@ -238,26 +237,30 @@ describe("AC-L2-3 同批多 toolCall 串行", () => {
       events.push(ev);
     }
 
-    // 事件序:A.start < A.end < B.start < B.end
-    const aStart = events.findIndex(
-      (e) => e.type === "tool_execution_start" && (e as { toolCallId: string }).toolCallId === "A",
-    );
-    const aEnd = events.findIndex(
-      (e) => e.type === "tool_execution_end" && (e as { toolCallId: string }).toolCallId === "A",
-    );
-    const bStart = events.findIndex(
-      (e) => e.type === "tool_execution_start" && (e as { toolCallId: string }).toolCallId === "B",
-    );
-    const bEnd = events.findIndex(
-      (e) => e.type === "tool_execution_end" && (e as { toolCallId: string }).toolCallId === "B",
-    );
-    expect(aStart).toBeGreaterThanOrEqual(0);
-    expect(aStart).toBeLessThan(aEnd);
-    expect(aEnd).toBeLessThan(bStart);
-    expect(bStart).toBeLessThan(bEnd);
+    const idxOf = (type: string, id: string) =>
+      events.findIndex((e) => e.type === type && (e as { toolCallId: string }).toolCallId === id);
+    const aStart = idxOf("tool_execution_start", "A");
+    const aEnd = idxOf("tool_execution_end", "A");
+    const bStart = idxOf("tool_execution_start", "B");
+    const bEnd = idxOf("tool_execution_end", "B");
 
-    // 时间戳不重叠:A.end <= B.start(串行)。并发则 B.start < A.end。
-    expect(toolA.ended[0]!).toBeLessThanOrEqual(toolB.started[0]!);
+    // 两段式事件序:A.start < B.start(B 段前统一发,调用序)< A.end(setTimeout 注册序
+    // A 先 = A 先完)< B.end(end 恒按调用序回填,与完成序无关)
+    expect(aStart).toBeGreaterThanOrEqual(0);
+    expect(aStart).toBeLessThan(bStart);
+    expect(bStart).toBeLessThan(aEnd);
+    expect(aEnd).toBeLessThan(bEnd);
+
+    // run 窗口重叠:B 起跑时 A 未收尾 = 并发(翻案原「不重叠」锚)
+    expect(toolB.started[0]!).toBeLessThan(toolA.ended[0]!);
+
+    // 回填序 = 调用序:messages 与 turn_end.toolResults 均 A 前 B 后
+    const toolMsgs = context.messages.filter(
+      (m): m is ToolResultMessage => m.role === "toolResult",
+    );
+    expect(toolMsgs.map((m) => m.toolCallId)).toEqual(["A", "B"]);
+    const te = events.find((e) => e.type === "turn_end");
+    expect(te?.type === "turn_end" && te.toolResults.map((m) => m.toolCallId)).toEqual(["A", "B"]);
   });
 });
 
