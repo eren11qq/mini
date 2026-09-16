@@ -4,13 +4,14 @@
 // 全命中 → 一次 writeFile 落盘(AC-T2-2)。锚点按序应用(后锚在前锚结果上找,同 pi edit-diff)。
 // 工具层可 try/catch(loop 层零 try/catch 约束不含 src/tools/,同 read.ts)。
 import { readFile, writeFile } from "node:fs/promises";
+import { diffDetails } from "../util/diff.ts";
 import { pathMatchOf, pathInput, type Tool, type ToolResult } from "./tool.ts";
 
 function err(text: string): ToolResult {
   return { content: [{ type: "text", text }], isError: true };
 }
-function ok(text: string): ToolResult {
-  return { content: [{ type: "text", text }], isError: false };
+function ok(text: string, details?: ToolResult["details"]): ToolResult {
+  return { content: [{ type: "text", text }], isError: false, ...(details && { details }) };
 }
 function msg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -75,6 +76,7 @@ export const editTool: Tool = {
     } catch (e) {
       return err(`edit failed: write ${path}: ${msg(e)}`);
     }
-    return ok(`edited ${path}: ${edits.length} anchor(s) applied`);
+    // C19:成功才挂 details(失败/abort 零 details → warn 路径逐字节旧样);两串已在内存,零额外 I/O。
+    return ok(`edited ${path}: ${edits.length} anchor(s) applied`, diffDetails(path, raw, cur));
   },
 };

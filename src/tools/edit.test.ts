@@ -32,6 +32,33 @@ describe("T2 edit:多锚点原子替换", () => {
     expect(await readFile(path, "utf8")).toBe("AAA x BBB y\n");
   });
 
+  it("C19: 成功 run → details = diffDetails(全文旧,全文新):± 行 = 锚点区,未触行成 ctx", async () => {
+    const path = join(dir, "c19.txt");
+    await writeFile(path, "aaa x\nbbb y\n");
+
+    const result = await editTool.run({ path, edits: [{ oldText: "aaa x", newText: "AAA x" }] });
+    expect(result.isError).toBe(false);
+    // 手算:尾换行 phantom 空行按 split 模型成 ctx 行(卡钉「尾换行翻转显 ± 空行」同一模型,W2 眼验)。
+    expect(result.details).toEqual({
+      kind: "diff",
+      path,
+      added: 1,
+      removed: 1,
+      hunks: [
+        {
+          oldStart: 1,
+          newStart: 1,
+          rows: [
+            { t: "-", s: "aaa x" },
+            { t: "+", s: "AAA x" },
+            { t: " ", s: "bbb y" },
+            { t: " ", s: "" },
+          ],
+        },
+      ],
+    });
+  });
+
   it("AC-T2-3 一锚点不命中 → 整批失败、文件字节级原样(无部分落盘)", async () => {
     const path = join(dir, "t23.txt");
     const original = "aaa x bbb y\n";
@@ -49,5 +76,19 @@ describe("T2 edit:多锚点原子替换", () => {
     expect(result.content.map((b) => b.text).join("")).toMatch(/not found/);
     // 原子性核心:首个锚点已命中的 "AAA" 也绝不能落盘
     expect(await readFile(path, "utf8")).toBe(original);
+  });
+
+  it("C19: abort/读失败 → details === undefined(warn 路径零侧信道)", async () => {
+    const path = join(dir, "c19-abort.txt");
+    await writeFile(path, "aaa x\n");
+    const miss = await editTool.run({ path, edits: [{ oldText: "zzz", newText: "Z" }] });
+    expect(miss.isError).toBe(true);
+    expect(miss.details).toBeUndefined();
+    const noFile = await editTool.run({
+      path: join(dir, "c19-none.txt"),
+      edits: [{ oldText: "a", newText: "b" }],
+    });
+    expect(noFile.isError).toBe(true);
+    expect(noFile.details).toBeUndefined();
   });
 });

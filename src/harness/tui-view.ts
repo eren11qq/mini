@@ -3,7 +3,8 @@
 // 纯函数零状态零 I/O —— 键盘/重绘在 tui.ts,这里全部可自动测。
 // 制表/生僻符号一律 \uXXXX 转义:模型直接生成 ╭╯○‿ 类同形字符会漂移(原型期连错 5+ 次),转义源是纯 ASCII,稳。
 import type { AgentMessage, AssistantMessage } from "../loop/types.ts";
-import { B, CYAN, DIM, GREEN, RESET, YELLOW } from "./ansi.ts";
+import type { DiffRow, ToolDetails } from "../util/diff.ts";
+import { B, CYAN, DIM, GREEN, RED, RESET, YELLOW } from "./ansi.ts";
 import { renderMarkdown } from "./markdown.ts";
 
 export { B }; // 重导出保对外面:历史 `import { B } from tui-view` 不破(依赖单向 tui-view → ansi)。
@@ -77,6 +78,9 @@ export interface Entry {
   kind: EntryKind;
   text: string;
   id?: string; // tool 行凭 toolCallId 回填结果,不重复开新行
+  // C19:工具侧信道(tui.ts 从 tool_execution_end 的 result.details 搬运)。
+  // 不新增 EntryKind → 无 details 旧路径白拿 diff=0 锚(逐字节不变)。
+  details?: ToolDetails;
 }
 
 const PREFIX: Record<EntryKind, string> = {
@@ -96,16 +100,43 @@ const FAINT: Record<EntryKind, boolean> = {
   dim: true,
 };
 
+// ---- C19 tool diff 渲染枝 ----
+// ⎿(U+23BF,码点构造防漂移;WT 若画双宽退 └ 由 W2 眼验裁决)。汇总行 `⎿ +N −M 行` + hunk 行
+// (+ 绿 − 红 ctx dim),非 verbose 正文 8 行封顶同 C11 折叠机关。行不尾带 RESET —— wrapLines
+// 自闭机统一补,宽窗窄窗字节一致。
+const BRANCH = String.fromCodePoint(0x23bf);
+const MINUS = String.fromCodePoint(0x2212);
+const DIFF_BODY_MAX = 8;
+const rowStyle = (r: DiffRow): string => (r.t === "+" ? GREEN : r.t === "-" ? RED : DIM);
+
+function diffLogical(e: Entry, wrapW: number, verbose: boolean): string[] {
+  const d = e.kind === "tool" ? e.details : undefined;
+  if (!d || d.kind !== "diff") return [];
+  const out = wrapLines(
+    `${DIM}${BRANCH}${RESET} ${GREEN}+${d.added}${RESET} ${RED}${MINUS}${d.removed}${RESET} 行`,
+    wrapW,
+  );
+  const body = d.hunks.flatMap((h) => h.rows);
+  for (const r of verbose ? body : body.slice(0, DIFF_BODY_MAX))
+    out.push(...wrapLines(`${rowStyle(r)}${r.t}${r.s}`, wrapW));
+  if (!verbose && body.length > DIFF_BODY_MAX)
+    out.push(
+      ...wrapLines(`${DIM}… +${body.length - DIFF_BODY_MAX} 行(Ctrl+O 展开)${RESET}`, wrapW),
+    );
+  return out;
+}
+
 // 一条逻辑条目 → 若干物理行(首行带符号,续行两空格缩进)。
 // C12 顺序契约:分块 → 行内样式 → wrapLines → 前缀。仅 bot 过 markdown(含 live);
 // user/tool/warn/think 保持字面直折 = 旧行为逐字节不变(防注入变脸)。
-export function entryLines(e: Entry, w: number): string[] {
+// C19:tool 条目带 diff details → 文本行后追加渲染枝(无 details = 零追加,diff=0 锚)。
+export function entryLines(e: Entry, w: number, verbose = false): string[] {
   const wrapW = Math.max(4, w - 2);
   const logical =
     e.kind === "bot"
       ? renderMarkdown(e.text, wrapW).flatMap((l) => wrapLines(l, wrapW))
       : undefined;
-  const lines = logical ?? wrapLines(e.text, wrapW);
+  const lines = [...(logical ?? wrapLines(e.text, wrapW)), ...diffLogical(e, wrapW, verbose)];
   return lines.map((l, i) => {
     const head = i === 0 ? PREFIX[e.kind] : "  ";
     const body = FAINT[e.kind] ? `${DIM}${l}${RESET}` : l;
@@ -123,7 +154,7 @@ export function entriesToLines(es: Entry[], w: number, verbose = false): string[
   const out: string[] = [];
   for (const e of es) {
     if (e.kind === "think" && !verbose) out.push(`${DIM}${thinkSummary(e.text)}${RESET}`);
-    else out.push(...entryLines(e, w));
+    else out.push(...entryLines(e, w, verbose));
   }
   return out;
 }

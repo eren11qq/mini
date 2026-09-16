@@ -414,10 +414,10 @@ export interface DiffHunk {
 
 ### Acceptance criteria
 
-- [ ] `util/diff.test.ts`:纯增/纯删/中段替换 ctx=2 窗/近距并 hunk 远距拆/gap=2·ctx+1 边界/600×600 走退化路且 added·removed 计数精确/尾换行翻转显 ± 空行/超 180 行 `truncated:true` 计数仍全量
-- [ ] edit.test:成功 run → details 的 ± 行与锚点区一致且原行成 `" "` 上下文;abort/未命中 → `details === undefined`
-- [ ] tui-view.test 新 describe:红绿开闭序列逐字节(码点钉)、折叠算式(9 行正文 → 8 + `… +1 行`)、verbose 全展、含大 diff 条目整屏仍 ≤height 且每行 vw=width;无 details tool 条目 = diff=0 锚逐字节不变;user/bot/warn 负锚
-- [ ] stream/serialize/session 文件零动;`--continue` 回放与今平价(tool 结果本就不落盘)
+- [x] `util/diff.test.ts`:纯增/纯删/中段替换 ctx=2 窗/近距并 hunk 远距拆/gap=2·ctx+1 边界/600×600 走退化路且 added·removed 计数精确/尾换行翻转显 ± 空行/超 180 行 `truncated:true` 计数仍全量
+- [x] edit.test:成功 run → details 的 ± 行与锚点区一致且原行成 `" "` 上下文;abort/未命中 → `details === undefined`
+- [x] tui-view.test 新 describe:红绿开闭序列逐字节(码点钉)、折叠算式(实现取 12 行 → 8 + `… +4 行`,9 行时折叠与 verbose 行数同 = 歧义故换)、verbose 全展、含大 diff 条目整屏仍 ≤height 且每行 vw=width;无 details tool 条目 = diff=0 锚逐字节不变;user/bot/warn 负锚
+- [x] stream/serialize/session 文件零动;`--continue` 回放与今平价(tool 结果本就不落盘)
 - [ ] 真机抽验(W2):TTY 让 agent edit 一行 → 眼看 `-` 红 `+` 绿、上下文灰、`⎿` 单宽;Ctrl+O 展开;文案(`⎿ +N −M 行` / `… +N 行(Ctrl+O 展开)`)人审终判写回本行
 
 ---

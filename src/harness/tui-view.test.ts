@@ -1,7 +1,7 @@
 // P2 纯渲染层自动测试(只测 tui-view 这层纯函数;raw-mode 驱动 tui.ts 人工验,同 DECISIONS W2 精神)。
 // 断言全用 \u 码点字符串 —— 源码若生成时字符漂移(或同漂骗测),码点对不上必红,即漂移探测器。
 import { describe, expect, it } from "vitest";
-import { DIM } from "./ansi.ts";
+import { DIM, GREEN, RED, RESET } from "./ansi.ts";
 import {
   connectKeyInLines,
   entriesFromMessages,
@@ -20,6 +20,7 @@ import {
 } from "./tui-view.ts";
 import type { AgentMessage, AssistantMessage, StopReason } from "../loop/types.ts";
 import type { ContentBlock } from "../blocks.ts";
+import type { DiffDetails, DiffRow } from "../util/diff.ts";
 
 // 汇总行符号走码点构造(同 tui-view 源规约:生僻符号字面量易漂移)。
 const STAR = String.fromCodePoint(0x273b); // ✻
@@ -495,5 +496,71 @@ describe("C17 connectKeyInLines keyIn 底条", () => {
     const long = mk("k".repeat(60));
     expect(vw(plain(long)[2]!)).toBeLessThanOrEqual(40);
     expect(plain(long)[2]).toMatch(/^> …k+$/); // fitInput 保尾语义
+  });
+});
+
+describe("C19 tool diff 渲染枝", () => {
+  const BRANCH = String.fromCodePoint(0x23bf); // ⎿(码点构造,同 STAR 规约;WT 双宽退 └ 由 W2 眼验)
+  const MINUS = String.fromCodePoint(0x2212); // −
+  const dd = (added: number, removed: number, rows: DiffRow[]): DiffDetails => ({
+    kind: "diff",
+    path: "f",
+    added,
+    removed,
+    hunks: [{ oldStart: 1, newStart: 1, rows }],
+  });
+
+  it("字节逐钉:文本行旧样在前,⎿ 汇总 +N −M 行,行 = + 绿 − 红 ctx dim,两列 gutter", () => {
+    const e: Entry = {
+      kind: "tool",
+      text: "edit f ✓ ok",
+      details: dd(1, 1, [
+        { t: " ", s: "ctx1" },
+        { t: "-", s: "old" },
+        { t: "+", s: "new" },
+      ]),
+    };
+    expect(entryLines(e, 60)).toEqual([
+      `${DIM}▸${RESET} edit f ✓ ok`,
+      `  ${DIM}${BRANCH}${RESET} ${GREEN}+1${RESET} ${RED}${MINUS}1${RESET} 行`,
+      `  ${DIM} ctx1${RESET}`,
+      `  ${RED}-old${RESET}`,
+      `  ${GREEN}+new${RESET}`,
+    ]);
+  });
+
+  it("折叠算式:12 行正文 → 8 + `… +4 行(Ctrl+O 展开)`(dim);verbose → 12 行全展零提示", () => {
+    const body: DiffRow[] = Array.from({ length: 12 }, (_, i) => ({ t: "+", s: `l${i}` }));
+    const e: Entry = { kind: "tool", text: "edit f ✓", details: dd(12, 0, body) };
+    const folded = entryLines(e, 60);
+    // 1 文本 + 1 汇总 + 8 正文 + 1 提示 = 11
+    expect(folded).toHaveLength(11);
+    expect(folded[10]).toBe(`  ${DIM}… +4 行(Ctrl+O 展开)${RESET}`);
+    expect(folded[9]).toBe(`  ${GREEN}+l7${RESET}`); // 第 8 正文行 = l7(l8 起被折)
+    const full = entryLines(e, 60, true); // 1 + 1 + 12 = 14,无提示行
+    expect(full).toHaveLength(14);
+    expect(full[13]).toBe(`  ${GREEN}+l11${RESET}`);
+  });
+
+  it("diff=0 锚 + 负锚:无 details tool 逐字节旧样;user/bot/warn 挂 details 也不出枝(kind 门)", () => {
+    expect(entryLines({ kind: "tool", text: "edit f ✓ ok" }, 60)).toEqual([
+      `${DIM}▸${RESET} edit f ✓ ok`,
+    ]);
+    const stray = dd(1, 0, [{ t: "+", s: "x" }]);
+    for (const kind of ["user", "bot", "warn"] as const) {
+      const ls = entryLines({ kind, text: "t", details: stray }, 60);
+      expect(ls.some((l) => l.includes(BRANCH))).toBe(false);
+      expect(ls).toEqual(entryLines({ kind, text: "t" }, 60));
+    }
+  });
+
+  it("整屏契约:大 diff(长行 70 字)窄屏 40 → 行数 ≤height 且每行 vw=width;verbose 全屏不破契约", () => {
+    const body: DiffRow[] = Array.from({ length: 12 }, () => ({ t: "-", s: "k".repeat(70) }));
+    const e: Entry = { kind: "tool", text: "edit f ✓", details: dd(0, 12, body) };
+    for (const verbose of [false, true]) {
+      const ls = renderView(view({ width: 40, height: 20, entries: [e], verbose })).split("\n");
+      expect(ls.length).toBeLessThanOrEqual(20);
+      for (const l of ls) expect(vw(l)).toBe(40); // pad 满宽 + wrap 自闭(超长行折,不撑破)
+    }
   });
 });

@@ -4,6 +4,7 @@
 // loop/stream/memory 零改动;确认门/中断/落盘裁决仍全在 loop 与 cli 既有缝里。
 import { createInterface } from "node:readline";
 import type { AgentEvent, AgentMessage, ConfirmAnswer } from "../loop/types.ts";
+import type { ToolDetails } from "../util/diff.ts";
 import { DIM, RESET } from "./ansi.ts";
 import { reduceConnect, type ConnectEvent, type ConnectState } from "./connect-flow.ts";
 import { filterCommands, type SlashCommand } from "./commands.ts";
@@ -364,15 +365,19 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
           break;
         case "tool_execution_end": {
           const mark = ev.isError ? "✗" : "✓";
+          // C19:侧信道按引用搬进 entry(run-loop 零改),失败 result 本无 details → undefined 白拿旧样。
+          const details = (ev.result as { details?: ToolDetails } | undefined)?.details;
           const i = entries.findIndex((e) => e.id === ev.toolCallId);
           if (i >= 0) {
             const e = entries[i]!;
             e.text = `${e.text} → ${previewResult(ev.result)} ${mark}`;
+            e.details = details;
             if (ev.isError) e.kind = "warn";
           } else
             entries.push({
               kind: ev.isError ? "warn" : "tool",
               text: `${ev.toolName} → ${previewResult(ev.result)} ${mark}`,
+              details,
             });
           break;
         }

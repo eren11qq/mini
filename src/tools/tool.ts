@@ -6,6 +6,7 @@
 // confirm gate 留 T2(beforeToolCall hook),L2 工具直接执行。
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { TextBlock } from "../blocks.ts";
+import type { ToolDetails } from "../util/diff.ts";
 
 export interface Tool {
   name: string;
@@ -68,4 +69,8 @@ export interface ToolResult {
   isError: boolean;
   // AC-L3-5:某 ToolResult 标 terminate=true → 该批 tool_execution_end 全完后停。
   terminate?: boolean;
+  // C19(docs/ISSUES.md):结构化展示侧信道(如 edit 的红绿 diff)。
+  // 持久化只走 content → provider 每轮重吃大 diff 的 token 污染从根上绕开;
+  // run-loop 把 result 按引用塞进 tool_execution_end 事件,loop/stream 零改动。
+  details?: ToolDetails;
 }
