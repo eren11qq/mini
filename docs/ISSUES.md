@@ -3,7 +3,7 @@
 本地 tracker。源 = 2026-09-15 设计对话(plan: confirm 系统分层流水线)。
 目标:弹窗从"每次工具调用"降为"仅未预批且非只读的边界动作",同时堵复合命令越权洞。
 分层顺序(所有片共同遵守):工具分级 → 参数解析 → 危险黑名单 → allow 判定(内置只读表 + rules)→ 弹窗兜底。
-合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。C15(/model 自配 key)= PRD 翻案卡,独立于 C10-C14 链,2026-09-15 插队先做。kilocode 对标三卡 C16(弹层特效)→C17(/connect 向导)→C18(/model 收口)按序合,C17 blocked by C16、C18 blocked by C17。展示升级弹头三卡(2026-09-16 立,Claude Code 式工具渲染):C19(edit diff 穿全层)先行,C20(write diff)/C21(bash ⎿ 树)blocked by C19 且互可并行;C19 建议先于 C17 落(tui.ts 邻区防撞)。C22 = skill 三段式(Kilo 同款:扫目录→元数据表进 prompt→工具按需注入)预留号,未建卡。
+合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。C15(/model 自配 key)= PRD 翻案卡,独立于 C10-C14 链,2026-09-15 插队先做。kilocode 对标三卡 C16(弹层特效)→C17(/connect 向导)→C18(/model 收口)按序合,C17 blocked by C16、C18 blocked by C17。展示升级弹头三卡(2026-09-16 立,Claude Code 式工具渲染):C19(edit diff 穿全层)先行,C20(write diff)/C21(bash ⎿ 树)blocked by C19 且互可并行;C19 建议先于 C17 落(tui.ts 邻区防撞)。C22 = skill 三段式(Kilo 同款:扫目录→元数据表进 prompt→工具按需注入)预留号,未建卡。2026-09-16 另起 D 系列(MAF 图案移植批,源 = `docs/PRD-V2.md`,见本文件末尾):编号独立于 C 避并行会话撞号;合并序 D1→D2→D4,D3 刀位独立可穿插,D5 收尾吃全部。
 
 ---
 
@@ -456,3 +456,104 @@ timeout/错误 fail 分支零 details → 旧 warn 路径不动。plain 模式�
 - [ ] bash.test:`echo hi` 成功 → `details.text === content[0].text`;timeout 路径 → undefined
 - [ ] tui-view.test:out 树逐字节(⎿ 首行/续行缩进/30 行 → 8 + `… +22 行` 折叠算式/verbose 全展);header 首行式对 `out` 生效且其余 kind diff=0 负锚
 - [ ] 真机:跑 `seq 30` → 树 8 行折叠,Ctrl+O 全展;文案终判写回
+
+---
+
+# D 系列 — 生产运行加固(MAF 图案移植批)
+
+源 = 2026-09-16 microsoft/agent-framework 调研对话 + `docs/PRD-V2.md`(故事号引该文件)。结论基线:MAF 无 TS SDK,只移植图案不引代码;新依赖恒零。合并序 D1→D2→D4,D3 刀位独立(runLoop)可穿插,D5 收尾。现行 bug 靶心:toolResult 从未落盘(D1 修)。
+
+---
+
+## D1 — toolResult 即时落盘 + resume 悬空配对修复 + maxTurns 续计
+
+**Type**: AFK · **Blocked by**: 无(D 系列之首;D2 接线位长在本卡分发表上)
+
+### What to build
+
+Bug:cli 落盘只订阅 `message_end`,而 runLoop 对 toolResult 不发 message_* 事件(只随 turn_end 携带)→ toolResult 永不进 JSONL → 带工具的会话 `--continue` = 末条 assistant 悬空 toolCall、配对全缺 → 两方言 toWire 把悬空 tool_calls 喂给 provider → 400。三刀(承 PRD-V2 Implementation Decisions):
+
+1. 纯叶 `memory/journal.ts` `eventToEntries(event)`:新增 `tool_execution_end` → `{type:"message", payload:ToolResultMessage}`;cli 订阅环从硬编码 if 改查此表,assistant 的 message_end 落盘行为逐字节不变(entry 仍 5 类零新增)。
+2. 同文件 `repairDangling(messages)`:末条 assistant(`stopReason==="tool_use"`)的 toolCall id 集 − 其后已存在 toolResult 的 toolCallId 集 = 缺位;逐个合成 `{isError:true}` 文本「interrupted before result was persisted — 副作用可能已发生,先核实(bash 重跑前查盘)再重试」;接 `SessionManager.rebuild()` 出口,loop/cli 零感知。
+3. maxTurns 续计:cli 侧纯函数从重建 messages 派生「末条 user 之后的 assistant 数」作偏移传入既有 `maxTurns` 选项,loop 零改动。
+
+### Acceptance criteria
+
+- [ ] journal.test:`tool_execution_end` → 恰一条 message entry(payload role=toolResult 字段完整);message_end 输出与现行逐字节同;其余事件种 → 零条
+- [ ] repairDangling 表测:无悬空 = diff-0 / 两缺其一 = 只补一条 / 末条非 tool_use = 不动 / 多 toolCall 全缺 = 按调用序全补
+- [ ] S3 临时目录:append 全剧本 → 新 `open().rebuild()` → messages 零悬空;两方言 toWire 各一例锚:请求体零悬空 tool_use / tool_use 与 tool_result 一一配对(S2 离线 fixture 先例)
+- [ ] maxTurns 偏移纯函数测(假 messages 表驱动:0 turn / 中途 user 重置 / 末条 user 未回)
+- [ ] e2e 剧本(plain 慢喂,逐行 sleep 防 EOF = C18 教训):kill -9 于 bash 执行中 → `--continue` 发消息 → 断请求体含「结果未知」补位行;脚本留档并把结论写回本卡
+- [ ] 全仓零回归 + typecheck/eslint/prettier 干净
+
+---
+
+## D2 — AgentEvent trace 落盘(JSONL 旁挂,`--no-trace` 可关)
+
+**Type**: AFK · **Blocked by**: D1(同刀 cli 订阅环;D1 的 journal 分发表 = 本卡接线位)
+
+### What to build
+
+纯叶 `harness/trace.ts`:`traceLine(event, clock) → string`,行 = `{ts, agentId?, ...event}`,事件名与字段原样保留(日后转 OTLP 不改格式,故事 10)。零 fs 在叶内;cli 订阅环逐事件 appendFile 到 `~/.mini/sessions/<cwd编码>/<会话>.trace.jsonl`(与会话文件同目录旁挂)。缺省即开;`--no-trace` = parseArgs 新 flag(args.ts 纯缝先例)。harness 故意浅不破:裁决零渗,接线只有 append。
+
+### Acceptance criteria
+
+- [ ] traceLine 表测:10 类事件各类一行、ts = 注入 clock、键序稳定逐字节可断;turn_end 的 messages/toolResults 序列化完整
+- [ ] args.test:`--no-trace` 解析 + 缺省 = 开
+- [ ] 离线端到端(隔离 HOME + 假流剧本):一场含工具对话 → trace.jsonl 行数 = 事件数且与会话文件双写互不吞行(两文件都在、语义各自完整);`--no-trace` 跑同剧本 → 零 trace 文件
+- [ ] 全仓零回归
+
+---
+
+## D3 — 同批 toolCall 两段式并行(A 弹检串行 / B 并发 / 调用序回填)
+
+**Type**: AFK · **Blocked by**: 无(刀在 runLoop 工具批区,与 D1/D2 零冲突,可并行开发)
+
+### What to build
+
+runLoop 工具批区改两段:A 段逐 call 串行完成 validate → danger → rules/session/readonly/autoAccept → confirm await 弹窗(收集已过门的 run 闭包;`tool_execution_start` 移到 B 段前按调用序统一发),A→B 之间查 signal(既有 aborted 缝保留);B 段 `Promise.allSettled` 并发执行 run 闭包,results 按调用序回填 messages 与 toolResults;abort 杀死致缺位 → 合成 `{isError:true,"aborted"}` 补位不破配对。terminate 语义不变(全批完成再停)。write/edit 互斥仍靠既有 per-path 写队列;bash 在飞吃 signal(Story 16 机制零动)。弹窗体验:对人仍一次一个。
+
+### Acceptance criteria
+
+- [ ] registry.test D3 组:假流两独立 read call → 假工具闭包记录 start 窗口重叠(第二个 start 早于第一个 end),回填序 = 调用序
+- [ ] 两未预批 call:confirm 恰 2 次且串行(第 2 次弹时第 1 次已答完),双 yes → 两 run 并发执行
+- [ ] abort A 后 B 前命中 → B 不启动,整批走既有 aborted 路径(AC-L3-4 剧本逐字节同);B 中途 abort → 缺位全补 isError,配对完整(两方言 toWire 可过)
+- [ ] 单 call 批 = 现行行为逐字节(dif-0 负锚:既有工具批剧本全绿零改)
+- [ ] anyTerminate 批仍全批完成后停(AC-L3-5 复验)
+- [ ] 全仓零回归(基线 = 合卡前 HEAD 全绿数写回本卡)
+
+---
+
+## D4 — task 子代理:runLoop-as-a-Tool(只读首版)
+
+**Type**: AFK · **Blocked by**: D2(child 事件带 agentId 进 trace 的 AC 吃它;D3 合后自动获得并发 N 个 task 的 superstep 之效,非硬依赖)
+
+### What to build
+
+契约扩先行:`AgentEvent` 全 10 类可选 `agentId?: string`(types.ts 头注记照「maxTurns 唯一故意偏离」先例补一行;缺省 = 主代理,loop 体零特判透传)。新 `tools/task.ts`:`makeTaskTool({streamFn}) → Tool`,schema `{prompt:string}`;`run()` = 递归 `runLoop(streamFn, [read], fresh context, {confirm: confirmDeny, maxTurns: 20, signal: 父})`;child 全部事件打 agentId;结果 = child 末条 assistant text → content,child usage 合计一行进 trace(agent_end);失败/abort 面:child error 行 → 父收 isError toolResult,父循环不断。`confirmDeny` 纯叶:凡未 preapproved 答 `{kind:"no", reason:"sub-agent headless"}` —— 从 child 侧堵 `run-loop.ts` 「缺 confirm = 放行」洞(loop 缺省行为本卡不改,改它 = DEFERRED 候选)。child 工具 = [read],永不含 task = 深度 1 硬编码。cli 注册进 TOOLS(system prompt 工具集重建 = 既有机制);TUI 首版仅 tool_execution_start 派生「▸ task 运行中」一行,全量归属渲染 = DEFERRED 候选。
+
+### Acceptance criteria
+
+- [ ] task.test:makeTaskTool 面(schema/description/无 skipConfirm);child 工具集 = 白名单表断(无 task 无 bash 无 write/edit)
+- [ ] confirmDeny 单测:任意 prompt → `{no, "sub-agent headless"}`
+- [ ] S1 双层套娃剧本:父假流吐 task toolCall → child 独立假流(read → 作答)→ 父 messages 配对完整、child 末 text 成 toolResult、child 内 error 假行不断父循环
+- [ ] deny 洞负例:child 工具集经测试注入换假 bash → 零弹窗、父收 `user rejected: bash — sub-agent headless`、循环继续
+- [ ] agentId e2e(隔离 HOME + 假流):trace.jsonl 有 child 行且 agentId 非空;主代理行零该键(diff-0 锚)
+- [ ] abort 透传:父 signal 命中 → child 在飞工具被杀、双层 agent_end reason=aborted、父批补位配对完整
+- [ ] 全仓零回归
+
+---
+
+## D5 — spec 同步(DEFERRED 划两行 + DECISIONS ★修订 + 文案收口)
+
+**Type**: HITL(修订文案需人审) · **Blocked by**: D1–D4
+
+### What to build
+
+DEFERRED.md 划账:「并行 tool 执行」(D3)与「sub-agent」半行(D4;plan mode 半行不动);PRD.md:150 摘要行不动(行号锚定死教训 = C8),只在 DEFERRED 原条目处注「已由 D 系列翻案,见 PRD-V2」。DECISIONS.md「② 修订记录」表加两行:原决策(pi 刻意下放 / v1 串行确认门)→ 现决策(superstep 两段并行 / 只读深度 1 子代理)→ 引 D3/D4 + PRD-V2 故事号。D1-D4 落卡期间实现注记与 PRD-V2 措辞冲突处(agentId 取值方案、confirmDeny 住家、trace 文件名)以本卡统一收口。DEFERRED 候选新增:child 写权限 + 审批上抛(P5 触发式)、agentId 全量归属渲染、loop 缺 confirm 改默认拒。
+
+### Acceptance criteria
+
+- [ ] 四文档互检无矛盾(PRD-V2 / ISSUES / DECISIONS / DEFERRED;对照 = 翻案两行、★两行、D 卡 AC 注记映射表)
+- [ ] 修订行文案人审签号(HITL)
+- [ ] 本卡零生产码改动,全仓绿
