@@ -147,6 +147,7 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
   };
   // 同事件轮多次变更并成一次重绘(message_update 逐 token 到达 = 免闪)。
   let drawQueued = false;
+  let thinkStart = 0; // C23:本条 assistant 消息首帧 think 墙钟(ms),0 = 未记;message_end 盖章后归零
   const requestDraw = (): void => {
     if (drawQueued || !started) return;
     drawQueued = true;
@@ -349,13 +350,24 @@ export function createTui(opts: { cwd: string; commands: readonly SlashCommand[]
         case "turn_start":
           busy = true;
           break;
-        case "message_update":
+        case "message_update": {
           live = liveEntry(ev.message);
+          // C23:首帧 think 记墙钟(单点起步;后续帧仅覆写 live,不重置)。
+          if (live?.kind === "think" && thinkStart === 0) thinkStart = Date.now();
           break;
-        case "message_end":
-          entries.push(...entriesFromMessages([ev.message]));
+        }
+        case "message_end": {
+          const settled = entriesFromMessages([ev.message]);
+          // C23:耗时 = 首帧 think→消息尾(秒,浮点存形,渲染层 round;无 think 时 thinkStart=0 不盖)。
+          if (thinkStart !== 0) {
+            const dur = (Date.now() - thinkStart) / 1000;
+            for (const e of settled) if (e.kind === "think") e.duration = dur;
+            thinkStart = 0;
+          }
+          entries.push(...settled);
           live = null;
           break;
+        }
         case "tool_execution_start":
           entries.push({
             kind: "tool",

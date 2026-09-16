@@ -25,7 +25,30 @@ import type { DiffDetails, DiffRow, ToolDetails } from "../util/diff.ts";
 
 // 汇总行符号走码点构造(同 tui-view 源规约:生僻符号字面量易漂移)。
 const STAR = String.fromCodePoint(0x273b); // ✻
-const MID = String.fromCodePoint(0xb7); // ·
+
+it("C23: bot 子弹 ● + 块前空行(邻空不双插;entries 首条不插)", () => {
+  const es: Entry[] = [
+    { kind: "bot", text: "一" },
+    { kind: "bot", text: "二" },
+    { kind: "user", text: "u" },
+    { kind: "bot", text: "三" },
+  ];
+  const got = plain(entriesToLines(es, 60)).map((l) => l.replace(/ +$/, ""));
+  expect(got).toEqual(["\u25cf 一", "", "\u25cf 二", "› u", "", "\u25cf 三"]);
+});
+
+it("C23: user 枝满宽灰带 —— 每物理行 BG 包到 pad 满 w,其余 kind 零带", () => {
+  // pad = vw 补空(ESC 序列不计量);带体 = BG+B›RESET 重开 BG+正文 / 续行两空格,均满 w。
+  const band = (body: string, visible: number): string =>
+    "\x1b[48;5;238m" + body + " ".repeat(10 - visible) + "\x1b[0m";
+  const got = entryLines({ kind: "user", text: "hi\nsecond\n\u4e2d\u6587" }, 10);
+  expect(got).toEqual([
+    band("\x1b[1m\u203a\x1b[0m\x1b[48;5;238m hi", 4),
+    band("  second", 8),
+    band("  \u4e2d\u6587", 6),
+  ]);
+  expect(entryLines({ kind: "bot", text: "hi" }, 10)[0]!.includes("48;5")).toBe(false);
+});
 // 剥 ANSI 看纯文本(控制字符正则故意的,同 tui-view 源)。
 // eslint-disable-next-line no-control-regex
 const plain = (ls: string[]): string[] => ls.map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
@@ -185,11 +208,17 @@ describe("变体 A 定稿画面", () => {
     expect(short[9]!).toContain("cmd1");
     expect(short.join("\n")).not.toContain("cmd5"); // 超界的候选不渲染
   });
-  it("C11:非 verbose → 单条 think 只画一行 `\\u273b 思考\\u00b7N字`(N=去换行码点数,逐码点钉死)", () => {
-    // "思"+a+😀+b = 4 码点(代理对计 1);\\n 不计。期望串手算:DIM + 码点串 + RESET。
-    const es: Entry[] = [{ kind: "think", text: "思\na\u{1F600}b" }];
-    // 期望串走 backslash-u 码点转义(纯 ASCII 源,同 tui-view 头注防漂移规约)。
-    expect(entriesToLines(es, 60, false)).toEqual(["\x1b[2m\u273b 思考\u00b74字\x1b[0m"]);
+  it("C23 翻案 C11:think 单行;有耗时 = Thought for Ns (ctrl+o to expand),回放省时段", () => {
+    // 期望串全 \u 转义(纯 ASCII 源防漂移);N = round,max 1。
+    expect(entriesToLines([{ kind: "think", text: "一二" }], 60, false)).toEqual([
+      "\x1b[2m\u273b Thought (ctrl+o to expand)\x1b[0m",
+    ]);
+    expect(entriesToLines([{ kind: "think", text: "一二", duration: 5.4 }], 60, false)).toEqual([
+      "\x1b[2m\u273b Thought for 5s (ctrl+o to expand)\x1b[0m",
+    ]);
+    expect(entriesToLines([{ kind: "think", text: "x", duration: 0.2 }], 60, false)).toEqual([
+      "\x1b[2m\u273b Thought for 1s (ctrl+o to expand)\x1b[0m",
+    ]);
   });
   it("C11:verbose=true → think 全文淡显原样;同 entries 两帧行数确定(2 vs 3)", () => {
     const es: Entry[] = [
@@ -198,8 +227,8 @@ describe("变体 A 定稿画面", () => {
     ];
     const collapsed = entriesToLines(es, 60, false);
     const verbose = entriesToLines(es, 60, true);
-    expect(plain(verbose)).toEqual(["  一二", "  三四", "▍ 答复"]);
-    expect(plain(collapsed)).toEqual([`${STAR} 思考${MID}4字`, "▍ 答复"]);
+    expect(plain(verbose)).toEqual(["  一二", "  三四", "", "● 答复"]);
+    expect(plain(collapsed)).toEqual([`${STAR} Thought (ctrl+o to expand)`, "", "● 答复"]);
   });
   it("C11:renderView 认 verbose —— live think 恒展开,message_end 落定即收一行,verbose 全展开", () => {
     const m = asst([{ type: "thinking", text: "一二\n三四" }]);
@@ -213,7 +242,7 @@ describe("变体 A 定稿画面", () => {
       "  三四",
     ]);
     expect(body(renderView(view({ entries: entriesFromMessages([m]), verbose: false })))).toEqual([
-      `${STAR} 思考${MID}4字`,
+      `${STAR} Thought (ctrl+o to expand)`,
     ]);
     expect(body(renderView(view({ entries: entriesFromMessages([m]), verbose: true })))).toEqual([
       "  一二",
@@ -299,15 +328,14 @@ describe("loop 数据 → 条目", () => {
 describe("C12 bot markdown 接线", () => {
   const BB = "\x1b[1m";
   const DD = "\x1b[2m";
-  const GG = "\x1b[32m";
   const RR = "\x1b[0m";
   const BULLET = String.fromCodePoint(0x2022); // •
-  const VBAR_LINE = String.fromCodePoint(0x258d); // ▍
+  const VBAR_LINE = String.fromCodePoint(0x25cf); // ●
   const CHEV = String.fromCodePoint(0x203a); // ›
-  it("bot 条目全谱:head/blank/bold/list 各成逻辑行,首行 ▍ 续行两空格(手算逐字符)", () => {
+  it("bot 条目全谱:head/blank/bold/list 各成逻辑行,首行 ● 续行两空格(手算逐字符)", () => {
     const e: Entry = { kind: "bot", text: "# 标题\n\n**甲乙丙丁**\n\n- 项" };
     expect(entryLines(e, 10)).toEqual([
-      `${GG}${VBAR_LINE}${RR} ${BB}标题${RR}`,
+      `${VBAR_LINE} ${BB}标题${RR}`,
       "  ",
       `  ${BB}甲乙丙丁${RR}`,
       "  ",
@@ -317,19 +345,19 @@ describe("C12 bot markdown 接线", () => {
   it("AC-3:超宽 bold CJK 折行 = 每物理行自闭(尾 RESET 头重开)且 vw ≤ w", () => {
     const e: Entry = { kind: "bot", text: "**甲乙丙丁**" };
     // w=8 → 折行宽 6:三字 6 列断,丁独行重开 bold(独立于实现手算)。
-    expect(entryLines(e, 8)).toEqual([`${GG}${VBAR_LINE}${RR} ${BB}甲乙丙${RR}`, `  ${BB}丁${RR}`]);
+    expect(entryLines(e, 8)).toEqual([`${VBAR_LINE} ${BB}甲乙丙${RR}`, `  ${BB}丁${RR}`]);
     expect(entryLines(e, 8).every((l) => vw(l) <= 8)).toBe(true);
   });
-  it("AC-4:user/tool 行 #/** 保持字面,不过 markdown(逐字节=旧行为)", () => {
-    expect(entryLines({ kind: "user", text: "# x\n**y**" }, 40)).toEqual([
-      `${BB}${CHEV}${RR} # x`,
-      "  **y**",
-    ]);
+  it("AC-4:user/tool 行 #/** 保持字面,不过 markdown(字面 = 行为本体;BG 带另有逐字节测)", () => {
+    const u = plain(entryLines({ kind: "user", text: "# x\n**y**" }, 40)).map((l) =>
+      l.replace(/ +$/, ""),
+    );
+    expect(u).toEqual([`${CHEV} # x`, "  **y**"]);
     expect(entryLines({ kind: "tool", text: "**t**" }, 40)).toEqual([`${DD}▸${RR} **t**`]);
   });
   it("流式半开围栏 live bot = code 行不崩(liveEntry 同走 entryLines 派生链)", () => {
     expect(entryLines({ kind: "bot", text: "```\nabc" }, 40)).toEqual([
-      `${GG}${VBAR_LINE}${RR} ${DD}abc${RR}`,
+      `${VBAR_LINE} ${DD}abc${RR}`,
     ]);
   });
   it("AC-5:整屏多块 markdown 后 renderView 行数 ≤ height(预算算术不变)", () => {

@@ -7,4 +7,5 @@ export const RED = "\x1b[31m"; // C19 diff − 行
 export const GREEN = "\x1b[32m";
 export const YELLOW = "\x1b[33m";
 export const CYAN = "\x1b[36m";
+export const BG = "\x1b[48;5;238m"; // C23 user 灰底带(256 色深灰;RESET 关)
 export const RESET = "\x1b[0m";

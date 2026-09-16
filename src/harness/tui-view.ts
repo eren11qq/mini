@@ -4,7 +4,7 @@
 // 制表/生僻符号一律 \uXXXX 转义:模型直接生成 ╭╯○‿ 类同形字符会漂移(原型期连错 5+ 次),转义源是纯 ASCII,稳。
 import type { AgentMessage, AssistantMessage } from "../loop/types.ts";
 import type { DiffRow, ToolDetails } from "../util/diff.ts";
-import { B, CYAN, DIM, GREEN, RED, RESET, YELLOW } from "./ansi.ts";
+import { B, BG, CYAN, DIM, GREEN, RED, RESET, YELLOW } from "./ansi.ts";
 import { renderMarkdown } from "./markdown.ts";
 
 export { B }; // 重导出保对外面:历史 `import { B } from tui-view` 不破(依赖单向 tui-view → ansi)。
@@ -81,11 +81,14 @@ export interface Entry {
   // C19:工具侧信道(tui.ts 从 tool_execution_end 的 result.details 搬运)。
   // 不新增 EntryKind → 无 details 旧路径白拿 diff=0 锚(逐字节不变)。
   details?: ToolDetails;
+  duration?: number; // C23:think 墙钟秒(tui.ts 盖;缺省 = 回放省耗时段)
 }
 
+// C23(docs/ISSUES.md):bot 子弹 = ● 本色零染(原 GREEN ▍ 翻案;码点构造防漂移,声明须先于 PREFIX 避 TDZ)。
+const BULL = String.fromCodePoint(0x25cf); // ●
 const PREFIX: Record<EntryKind, string> = {
   user: `${B}›${RESET} `,
-  bot: `${GREEN}▍${RESET} `,
+  bot: `${BULL} `,
   tool: `${DIM}▸${RESET} `,
   warn: `${YELLOW}⚠${RESET} `,
   think: `${DIM}  ${RESET}`,
@@ -153,20 +156,25 @@ export function entryLines(e: Entry, w: number, verbose = false): string[] {
   return lines.map((l, i) => {
     const head = i === 0 ? PREFIX[e.kind] : "  ";
     const body = FAINT[e.kind] ? `${DIM}${l}${RESET}` : l;
-    return head + body;
+    const line = head + body;
+    // C23: user = Claude 式满宽灰带。每个 RESET 后重开 BG(前缀 B›RESET 不截带、wrapLines
+    // 自闭机行尾码同续),整行 pad 到 w 再关 = 折行每段成带;其余 kind 逐字节旧路。
+    if (e.kind === "user") return BG + pad(line.split(RESET).join(RESET + BG), w) + RESET;
+    return line;
   });
 }
-// C11 汇总行:非 verbose 时一条 think 只画一行 `✻ 思考·N字`(N = 去换行后的码点数)。
-// 折叠是渲染期派生 —— 原文一直在 entry 里,verbose 一开即全文;符号走码点构造防源字符漂移。
-const STAR = String.fromCodePoint(0x273b); // ✻
-const MID = String.fromCodePoint(0xb7); // ·
-const thinkChars = (s: string): number => [...s.replace(/\n/g, "")].length;
-export const thinkSummary = (text: string): string => `${STAR} 思考${MID}${thinkChars(text)}字`;
+// C23 翻案 C11(docs/ISSUES.md):think 汇总行 = 星号 + Thought [for Ns] + (ctrl+o to expand)。
+// 秒数源 = Entry.duration(墙钟,tui.ts 落定盖戳,方向锁视图零钟);无耗时(--continue 回放)= 省时段。
+const STAR = String.fromCodePoint(0x273b); // 星号(码点构造防漂移,同 BRANCH 规约)
+export const thinkSummary = (durationSec?: number): string =>
+  `${STAR} Thought${durationSec === undefined ? "" : ` for ${Math.max(1, Math.round(durationSec))}s`} (ctrl+o to expand)`;
 
 export function entriesToLines(es: Entry[], w: number, verbose = false): string[] {
   const out: string[] = [];
   for (const e of es) {
-    if (e.kind === "think" && !verbose) out.push(`${DIM}${thinkSummary(e.text)}${RESET}`);
+    // C23: bot 块前空一行(邻行已空不双插;首条不插 = 顶栏邻位由 renderView live 同款管)。
+    if (e.kind === "bot" && out.length > 0 && out[out.length - 1] !== "") out.push("");
+    if (e.kind === "think" && !verbose) out.push(`${DIM}${thinkSummary(e.duration)}${RESET}`);
     else out.push(...entryLines(e, w, verbose));
   }
   return out;
@@ -210,7 +218,6 @@ export interface SelectView {
   items: SelectItem[]; // 空表 = 无匹配行(不关层,kilo 语义)
   sel: number; // 高亮下标由 tui.ts 键盘态裁决(−1 = 不指任何行),视图只画
 }
-const BULL = String.fromCodePoint(0x25cf); // ●(码点构造防漂移,同 STAR 规约)
 // 选中行 = 零背景、整行换主题淡蓝(命令名 CYAN+B + desc 同 CYAN)+ ● 位标(三轮真机裁决 2026-09-16 定档);
 // 未选行 = 本色 B title + 灰 desc;两态 desc 均列对齐 = 最长 title+3(Claude Code 式,补裁)。超宽复用 wrapLines 自闭机折行、续行缩进对齐。
 // 视口:自 sel 交替扩到 maxRows 行(高亮恒中段 = 首移居中)。sel 恒 −1..len−1(空表配 −1,调用方钳好)。
@@ -313,10 +320,17 @@ export function renderView(v: TuiView): string {
     : v.completion
       ? selectListLines(v.completion.items, v.width, v.completion.sel, budget)
       : [];
-  const content = [
+  const content0 = [
     ...headerLines(v.modelId, v.cwd, v.width),
     ...entriesToLines(v.entries, v.width, v.verbose),
-    ...(v.live ? entryLines(v.live, v.width) : []), // live 恒展开:流式期看全文,message_end 落定才折
+  ];
+  const last = content0.length > 0 ? content0[content0.length - 1]! : "";
+  const content = [
+    ...content0,
+    // C23: live bot 同款前置空行(邻非空才插)。live 恒展开:流式全文,message_end 落定才折。
+    ...(v.live
+      ? [...(v.live.kind === "bot" && last !== "" ? [""] : []), ...entryLines(v.live, v.width)]
+      : []),
   ];
   // 弹层占的尾行从消息体预算里扣(body 至少留 1 行,整屏恒 ≤ height)。
   const lines = content.slice(-Math.max(1, v.height - 4 - comp.length));

@@ -3,7 +3,7 @@
 本地 tracker。源 = 2026-09-15 设计对话(plan: confirm 系统分层流水线)。
 目标:弹窗从"每次工具调用"降为"仅未预批且非只读的边界动作",同时堵复合命令越权洞。
 分层顺序(所有片共同遵守):工具分级 → 参数解析 → 危险黑名单 → allow 判定(内置只读表 + rules)→ 弹窗兜底。
-合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。C15(/model 自配 key)= PRD 翻案卡,独立于 C10-C14 链,2026-09-15 插队先做。kilocode 对标三卡 C16(弹层特效)→C17(/connect 向导)→C18(/model 收口)按序合,C17 blocked by C16、C18 blocked by C17。展示升级弹头三卡(2026-09-16 立,Claude Code 式工具渲染):C19(edit diff 穿全层)先行,C20(write diff)/C21(bash ⎿ 树)blocked by C19 且互可并行;C19 建议先于 C17 落(tui.ts 邻区防撞)。C22 = skill 三段式(Kilo 同款:扫目录→元数据表进 prompt→工具按需注入),2026-09-16 建卡(见 C21 后),吃 DEFERRED skills 预留行。2026-09-16 另起 D 系列(MAF 图案移植批,源 = `docs/PRD-V2.md`,见本文件末尾):编号独立于 C 避并行会话撞号;合并序 D1→D2→D4,D3 刀位独立可穿插,D5 收尾吃全部。
+合并顺序 C1→C2(同碰 rules.ts)。C6/C8/C9 为 HITL,需人审文案/spec/视觉。显示升级三卡 C10(折行地基)→C12(排版)按序合,C11 可与 C10 并行;C13/C14 独立运维/诊断,C14 先跑让装机追平基准。C15(/model 自配 key)= PRD 翻案卡,独立于 C10-C14 链,2026-09-15 插队先做。kilocode 对标三卡 C16(弹层特效)→C17(/connect 向导)→C18(/model 收口)按序合,C17 blocked by C16、C18 blocked by C17。展示升级弹头三卡(2026-09-16 立,Claude Code 式工具渲染):C19(edit diff 穿全层)先行,C20(write diff)/C21(bash ⎿ 树)blocked by C19 且互可并行;C19 建议先于 C17 落(tui.ts 邻区防撞)。C22 = skill 三段式(Kilo 同款:扫目录→元数据表进 prompt→工具按需注入),2026-09-16 建卡(见 C21 后),吃 DEFERRED skills 预留行。C23 = Claude 撞脸三件套(● 子弹/Thought 耗时行/user 灰带),2026-09-16 用户截图裁决建卡,承 C22 后合。2026-09-16 另起 D 系列(MAF 图案移植批,源 = `docs/PRD-V2.md`,见本文件末尾):编号独立于 C 避并行会话撞号;合并序 D1→D2→D4,D3 刀位独立可穿插,D5 收尾吃全部。
 
 ---
 
@@ -478,6 +478,31 @@ Agent Skills 标准 / Kilo 同款,零新依赖。三段:
 - [x] skill.test.ts:命中 → 回喂正文(无 frontmatter 残留)isError:false / 未知 name → isError:true 且文本含所请求名
 - [ ] cli.ts 搬运(不写测,AC-H1-3 惯例):真机 = 落一个 `.mini/skills/test-hello/SKILL.md` → prompt 出表 → 模型自发 use_skill → 正文进对话 → 全程零确认弹
 - [x] DEFERRED.md 预留行划掉;全仓 typecheck + vitest 绿(实现落定 2026-09-16:41 files 396|1 全过,新测 12 条 = scanSkills 3 + prompt 2 + use_skill 2,system-prompt 旧 5 条零回归)
+
+---
+
+## C23 — Claude 撞脸三件套:● bot 符 + Thought 耗时行 + user 灰底带
+
+**Type**: AFK · 文案终判已获(2026-09-16 用户截图对照 Claude Code 三裁决) · **Blocked by**: 无(承 C22 后 HEAD)
+
+### What to build
+
+TUI 视觉对齐 Claude Code(纯显示层,tui-view.ts + ansi.ts + tui.ts 计时,loop/stream 零动):
+
+1. **`●` bot 子弹**(翻案 C12 绿 `▍`):`PREFIX.bot = "● "`(U+25CF 码点构造,本色零染色,续行两空格对齐不变);bot 块前插一空行(entriesToLines + renderView live 两处,邻行已空不双插;含 live)。
+2. **Thought 耗时行**(翻案 C11 `✻ 思考·N字`):`thinkSummary(text, durationSec?)` → 有秒 = `✻ Thought for Ns (ctrl+o to expand)`(N = round,max 1),回放/无秒 = `✻ Thought (ctrl+o to expand)`。`Entry.duration?`(可选加项);计时住 tui.ts(方向锁:视图零钟):首帧 live.kind==="think" 记 Date.now,message_end 落 entries 后盖章(口径 = 首帧→消息尾,toolCall 拖尾微偏大,首版接受);`--continue` 回放 = 无耗时形。thinkChars/MID 随翻案退场。
+3. **user 灰底带**:`ansi.ts` 新叶 `BG = \x1b[48;5;238m`(深灰 256 色,pin 逐字节);`entryLines` user 枝 = 每物理行 pad 到 w 后整行包 `BG…RESET`(满宽带,折行每段成带;wrapLines 自闭机与行尾 pad 契约不破,`vw` 剥码计宽不受影响)。`›` 前缀保留。
+
+负锚:tool/warn/dim 行逐字节不变;非 verbose think 折叠机位不变(仅文案换形);live 恒展开不变。
+
+### Acceptance criteria
+
+- [x] ansi.test:BG 常量逐字节 `\x1b[48;5;238m`
+- [x] tui-view.test(新形 + 旧钉翻案同步改):thinkSummary 有秒/无秒两形逐字节 / bot = 空行 + `● ` 首行(邻空不双插)/ user 枝 = 满宽灰带逐字节(单行 + 折行两段;`vw` 全宽契约行测试跟改;两帧/全谱/AC-3/AC-4/live 围栏五处旧钉随翻案)
+- [x] tui.ts 计时盖章(搬运级不写测,tui.test 现只吃 frameBytes/mapConfirm;thinkStart 墙钟 message_update 起 / message_end 盖,浮点存形渲染层 round):真机 = 想一段 → 落定见 `Thought for Ns`,秒数量级对
+- [ ] 真机 W2 眼验:三件套 + `--continue` 回放无秒形 + Windows Terminal 下 ●/灰带渲染无错位;文案终判回填本卡(已预批三处)
+
+实现账(2026-09-16):全仓 398|1 绿(承 e3758cf 396|1,净 +2 = gap/灰带两新 it;think 单测三断言并一不计数)+ tsc 净。灰带机要记:每个 RESET 后重开 BG(前缀/自闭机码不截带);bot 前置空行 = entriesToLines + renderView live 两处同规则。
 
 ---
 
