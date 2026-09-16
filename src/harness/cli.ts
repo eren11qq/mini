@@ -3,6 +3,7 @@
 // 选择/热切/会话挑选的裁决也全在纯缝里(parseArgs / resolveProvider / resolveModel /
 // SessionManager.list —— 均可测)。这里只做「读 flag → 选会话 → 拼参数 → 转事件 → 落盘」
 // 的搬运,零加工(卡 4:provider 工具形态映射已随 LoopContext.tools 敲实归方言)。
+import { appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -28,6 +29,7 @@ import { resolveModel } from "./resolve-model.ts";
 import { buildSystemPrompt } from "./system-prompt.ts";
 import { matchCommand, splitModelArg, type SlashCommand } from "./commands.ts";
 import { createPlainIO, createTui, type ChatIO } from "./tui.ts";
+import { traceLine } from "./trace.ts";
 
 // 出厂厂商(无 --model、无历史 model_change 时)。--model <alias> 与 model_change payload
 // 存的都是这个表的 key(alias);dialect 由 createStream 内部派发(S3,上层零改动切方言)。
@@ -270,6 +272,8 @@ async function main(): Promise<void> {
     const user: UserMessage = { role: "user", content: line };
     context.messages.push(user);
     session.append({ type: "message", payload: user });
+    // D2:会话文件已由上一行 append 首建 → 旁挂路径本轮定死(--no-trace = null,零落盘)。
+    const tracePath = args.trace ? session.traceFile() : null;
 
     // AC-H3-5:每轮从当前工具集重算 system prompt(纯函数零缓存 = 工具集变即重建)。
     // env 每轮现取(日期跨天热更新);仍走 opts,纯函数零状态不破。
@@ -294,6 +298,11 @@ async function main(): Promise<void> {
         sessionRules, // C6:答 2 = 规则进此数组(内存,本 run 免弹,不落盘)
       })) {
         io.render(event);
+        // D2:trace 逐事件旁挂落盘(缺省开,--no-trace 关)。先写 trace 再进 journal:
+        // trace = 观测面,appendFileSync 即写即刷,下游抛错不吞事件行(故事 7「有据可查」)。
+        if (tracePath !== null) {
+          appendFileSync(tracePath, traceLine(event, Date.now) + "\n");
+        }
         // D1:查 journal 分发表落盘(从前此处硬编码只认 message_end → toolResult 从不进
         // JSONL,--continue 悬空 toolCall 必 400)。append = 事件到达序,assistant 的
         // message_end 天然先于同批 tool_results,顺序语义与 M1 即时落盘一致。

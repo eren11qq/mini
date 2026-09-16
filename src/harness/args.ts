@@ -1,11 +1,14 @@
-// H2 S-b 缝:命令行 flag 手工解析(DECISIONS H2;flags 全集现 4 个;照 pi 无第三方库)。
-// --model <alias> 取值;--continue / --resume / --auto-accept-edits 布尔。本函数纯:只记录出现,
-// continue/resume 优先级与选会话在 cli 组装层裁决。--model 缺值抛错(绝不静默降级成「未给」)。
+// H2 S-b 缝:命令行 flag 手工解析(DECISIONS H2;flags 全集现 5 个;照 pi 无第三方库)。
+// --model <alias> 取值;--continue / --resume / --auto-accept-edits 布尔;--no-trace 关 trace。
+// 本函数纯:只记录出现,continue/resume 优先级与选会话在 cli 组装层裁决。
+// --model 缺值抛错(绝不静默降级成「未给」)。
 export interface ParsedArgs {
   model?: string;
   continue: boolean;
   resume: boolean;
   autoAcceptEdits: boolean;
+  // D2(docs/ISSUES.md):trace 落盘缺省即开;--no-trace 关(故事 8)。
+  trace: boolean;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -14,6 +17,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     continue: false,
     resume: false,
     autoAcceptEdits: false,
+    trace: true,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
@@ -29,6 +33,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       out.resume = true;
     } else if (a === "--auto-accept-edits") {
       out.autoAcceptEdits = true;
+    } else if (a === "--no-trace") {
+      out.trace = false;
     }
   }
   return out;

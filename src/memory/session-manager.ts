@@ -93,9 +93,11 @@ export class SessionManager {
   static open(opts: SessionOpenOptions): SessionManager {
     const sm = new SessionManager(opts);
     // 目录不存在 = 这台机器还没跑过 mini(首次运行正路)→ 按"无历史"处理,不 ENOENT 抛穿调用方。
+    // D2:同目录旁挂 `<会话>.trace.jsonl` 必须排除 —— trace mtime 恒新,不排除 = open()
+    // 把它当"最新会话"接回,rebuild 炸行/续写假会话(D2 红测实证 .trace.trace.jsonl)。
     const names = existsSync(sm.dir)
       ? readdirSync(sm.dir)
-          .filter((n) => n.endsWith(".jsonl"))
+          .filter((n) => n.endsWith(".jsonl") && !n.endsWith(".trace.jsonl"))
           .sort()
       : [];
     // 时间戳前缀只到秒 → 同秒两个会话(新建/测试快跑)字典序由 uuid 随机位决定,不可靠;
@@ -139,7 +141,7 @@ export class SessionManager {
     if (!existsSync(sm.dir)) return [];
     const out: SessionSummary[] = [];
     for (const name of readdirSync(sm.dir)) {
-      if (!name.endsWith(".jsonl")) continue;
+      if (!name.endsWith(".jsonl") || name.endsWith(".trace.jsonl")) continue; // D2 旁挂不算会话
       const file = join(sm.dir, name);
       let model: string | undefined;
       for (const raw of readFileSync(file, "utf8").trimEnd().split("\n").slice(1)) {
@@ -160,6 +162,13 @@ export class SessionManager {
     }
     out.sort((a, b) => b.mtimeMs - a.mtimeMs || (a.file < b.file ? 1 : -1));
     return out;
+  }
+
+  // D2(docs/ISSUES.md):trace JSONL 旁挂路径 = 会话文件同名换 `.trace.jsonl`。会话文件名含
+  // uuidv7 且延迟首建(只在类内)→ 本 getter 是唯一知情出口。首 append 前 = null;
+  // 纯推路径永不碰盘(落盘动作住 cli 订阅环,"接线只有 append" 裁决)。
+  traceFile(): string | null {
+    return this.file === null ? null : this.file.replace(/\.jsonl$/, ".trace.jsonl");
   }
 
   // parentId 缺省 = 续当前 leaf(线性);显式传 = 挂到旧 entry → 生成分支(M2)。

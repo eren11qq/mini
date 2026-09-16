@@ -507,10 +507,18 @@ Bug:cli 落盘只订阅 `message_end`,而 runLoop 对 toolResult 不发 message_
 
 ### Acceptance criteria
 
-- [ ] traceLine 表测:10 类事件各类一行、ts = 注入 clock、键序稳定逐字节可断;turn_end 的 messages/toolResults 序列化完整
-- [ ] args.test:`--no-trace` 解析 + 缺省 = 开
-- [ ] 离线端到端(隔离 HOME + 假流剧本):一场含工具对话 → trace.jsonl 行数 = 事件数且与会话文件双写互不吞行(两文件都在、语义各自完整);`--no-trace` 跑同剧本 → 零 trace 文件
-- [ ] 全仓零回归
+- [x] traceLine 表测:10 类事件各类一行、ts = 注入 clock、键序稳定逐字节可断;turn_end 的 messages/toolResults 序列化完整
+- [x] args.test:`--no-trace` 解析 + 缺省 = 开
+- [x] 离线端到端(隔离 HOME + 假流剧本):一场含工具对话 → trace.jsonl 行数 = 事件数且与会话文件双写互不吞行(两文件都在、语义各自完整);`--no-trace` 跑同剧本 → 零 trace 文件
+- [x] 全仓零回归
+
+### 实现注记(2026-09-16,TDD 红→绿全程)
+
+- **规模**:trace.test 12 例(10 种全覆盖 + clock 注入 + 键序逐字节含 agentId 提升位预锚 + 双写端到端 2)/ args.test 净 +3(既有全对象断言 9 例补 `trace:true`,红在实现缺字段)/ session-manager.test D2 组 4 例。判卷基线 = detached worktree @3b72f26 = 362 passed | 1 skipped → 净 +19 = 381|1;typecheck/eslint(0 error)/prettier 净。
+- **红测捞出的真 bug(同目录共存面)**:旁挂 `.trace.jsonl` 会被 `open()`(mtime 最新 = 恒吞)/`list()`(--resume 选择器假会话)吞掉(实证续写出 `.trace.trace.jsonl`)。修 = 两处扫描排除 `.trace.jsonl` 后缀 + 靶向锚测「trace mtime 更新仍不被选为会话」。`_${sessionId}.jsonl` 精确匹配天然不受累(不动)。
+- **agentId 裁决**:卡行形状 `{ts, agentId?, ...event}` 字面 = agentId 提升为 ts 后首键(非事件字面序尾随)→ `traceLine` 解构提升;缺省 undefined → JSON.stringify 零键 = D4「主代理行 diff-0」预锚。`as AgentEvent & { agentId?: string }` cast = D4 契约扩预留位,届时摘。
+- **接线必要新增(用户裁决 2026-09-16)**:`SessionManager.traceFile(): string | null` getter —— 会话文件名含 uuidv7 且延迟首建,类外不可知;纯推路径永不碰盘(卡「落盘动作住 cli」裁决不破)。cli 订阅环 3 行 = render → trace append(先写,下游抛错不吞观测面)→ journal 查表。
+- **e2e**:脚本 `/tmp/d2-e2e.sh` + 机关 `/tmp/d2-fakefetch.mjs`(承 D1,唯一改 = SSE 按请求队列消耗,一场进程跑完工具轮+终答轮)+ 断言器 `/tmp/d2-tracecheck.mjs`(逐行 parse/ts 单调非减/首尾 agent_*)。判卷 = 主树直跑(与 D4 零文件交叉)。12/12 PASS:旁挂兄弟位、行数=事件数(仓内 e2e 锚等式;真机断 ≥12 + 首尾对 + 工具事件对)、会话 5 类 entry 合法、D1 配对语义未踩、`--no-trace` 零 trace 且会话照常落。
 
 ---
 

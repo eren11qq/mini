@@ -731,3 +731,47 @@ describe("D1 rebuild:出口悬空修复", () => {
     expect(messages[4]).toEqual(user("续聊"));
   });
 });
+
+// D2(docs/ISSUES.md):trace JSONL 旁挂路径的出处。会话文件名 = <时间>_<uuidv7>.jsonl 且延迟
+// 首建(uuid 只在 SessionManager 内),cli 拿不到 → getter 是唯一知情出口。
+// 铁律:getter 纯推路径,永不创建 trace 文件(append 动作住 cli)。
+describe("D2 traceFile:旁挂路径", () => {
+  it("首 append 前 = null(会话文件未建,旁挂无从锚起);open 接回已有会话 = 即有值", () => {
+    const cwd = join(dir, "d2tf");
+    expect(new SessionManager({ baseDir: dir, cwd }).traceFile()).toBeNull();
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    sm.append({ type: "message", payload: user("hi") });
+    expect(SessionManager.open({ baseDir: dir, cwd }).traceFile()).not.toBeNull();
+  });
+
+  it("= 会话文件同目录同名换 .trace.jsonl 后缀;调用本身零副作用(盘上仍只 .jsonl)", async () => {
+    const cwd = join(dir, "d2side");
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    sm.append({ type: "message", payload: user("hi") });
+    const file = await soleSessionFile("d2side");
+    expect(sm.traceFile()).toBe(file.replace(/\.jsonl$/, ".trace.jsonl"));
+    // soleSessionFile 已断目录内恰一文件 → getter 未顺手建 trace 文件。
+  });
+
+  it("open() 接回(--continue/--resume)→ traceFile 指向同一旁挂,续写不另起文件", () => {
+    const cwd = join(dir, "d2reopen");
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    sm.append({ type: "message", payload: user("hi") });
+    expect(SessionManager.open({ baseDir: dir, cwd }).traceFile()).toBe(sm.traceFile());
+  });
+
+  it("同目录旁挂 trace 文件(且 mtime 更新)不被吞:open() 仍接回会话,list() 不列假会话", async () => {
+    const cwd = join(dir, "d2swallow");
+    const sm = new SessionManager({ baseDir: dir, cwd });
+    sm.append({ type: "message", payload: user("hi") });
+    const file = await soleSessionFile("d2swallow");
+    const tracePath = sm.traceFile()!;
+    // 先落会话行,再写 trace 行 → trace mtime ≥ 会话。open() 若按 mtime 吞了它,
+    // rebuild 必炸(trace 行不是 entry)或续写到假会话(D2 红测实证 .trace.trace.jsonl)。
+    await appendFile(tracePath, '{"ts":1,"type":"agent_start"}\n');
+    const back = SessionManager.open({ baseDir: dir, cwd });
+    expect(back.traceFile()).toBe(tracePath);
+    expect(back.rebuild().messages).toEqual([user("hi")]);
+    expect(SessionManager.list({ baseDir: dir, cwd }).map((s) => s.file)).toEqual([file]);
+  });
+});
